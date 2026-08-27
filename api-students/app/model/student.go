@@ -1,4 +1,4 @@
-package main
+package model
 
 import "time"
 
@@ -15,7 +15,7 @@ type CreateStudentRequest struct {
 	NIM      string  `json:"nim"`
 	Name     string  `json:"name"`
 	Grade    float64 `json:"grade"`
-	IsActive bool    `json:"is_active"`
+	IsActive *bool   `json:"is_active,omitempty"`
 }
 
 type ReplaceStudentRequest struct {
@@ -54,4 +54,9 @@ type ListQuery struct {
 	Sort     string
 	Order    string
 	IsActive *bool
+}
+
+// Offset menghitung berapa baris yang dilewati untuk halaman ini.
+func (q ListQuery) Offset() int {
+	return (q.Page - 1) * q.Limit
 }
