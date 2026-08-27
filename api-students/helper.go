@@ -1,25 +1,41 @@
 package main
 
 import (
+	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"api-students/app/model"
 )
+
+// reqCtx memberi batas waktu context 5 detik untuk operasi basis data.
+func reqCtx(c *fiber.Ctx) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(c.UserContext(), 5*time.Second)
+}
+
+// paramID membaca ID dari URL params dan memvalidasi nilainya berupa angka positif.
+func paramID(c *fiber.Ctx) (int, bool) {
+	id, err := c.ParamsInt("id")
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
+}
 
 // Response berhasil dengan status 200.
 func ok(c *fiber.Ctx, message string, data any) error {
-	return c.Status(fiber.StatusOK).JSON(WebResponse{
+	return c.Status(fiber.StatusOK).JSON(model.WebResponse{
 		Success: true,
 		Message: message,
 		Data:    data,
 	})
 }
 
-// Response berhasil untuk daftar data,
-// sekaligus mengirim informasi pagination melalui meta.
-func okList(c *fiber.Ctx, message string, data any, meta *Meta) error {
-	return c.Status(fiber.StatusOK).JSON(WebResponse{
+// Response berhasil untuk daftar data dengan informasi pagination.
+func okList(c *fiber.Ctx, message string, data any, meta *model.Meta) error {
+	return c.Status(fiber.StatusOK).JSON(model.WebResponse{
 		Success: true,
 		Message: message,
 		Data:    data,
@@ -27,12 +43,11 @@ func okList(c *fiber.Ctx, message string, data any, meta *Meta) error {
 	})
 }
 
-// Response berhasil membuat data baru dengan status 201.
-// Location menunjukkan alamat resource yang baru dibuat.
+// Response berhasil membuat data baru dengan status 201 dan header Location.
 func created(c *fiber.Ctx, message string, data any, location string) error {
 	c.Set("Location", location)
 
-	return c.Status(fiber.StatusCreated).JSON(WebResponse{
+	return c.Status(fiber.StatusCreated).JSON(model.WebResponse{
 		Success: true,
 		Message: message,
 		Data:    data,
@@ -46,7 +61,7 @@ func noContent(c *fiber.Ctx) error {
 
 // Response error umum.
 func fail(c *fiber.Ctx, status int, message string) error {
-	return c.Status(status).JSON(WebResponse{
+	return c.Status(status).JSON(model.WebResponse{
 		Success: false,
 		Message: message,
 	})
@@ -54,14 +69,14 @@ func fail(c *fiber.Ctx, status int, message string) error {
 
 // Response khusus validasi dengan status 422.
 func failValidation(c *fiber.Ctx, errs map[string]string) error {
-	return c.Status(fiber.StatusUnprocessableEntity).JSON(WebResponse{
+	return c.Status(fiber.StatusUnprocessableEntity).JSON(model.WebResponse{
 		Success: false,
 		Message: "validasi gagal",
 		Errors:  errs,
 	})
 }
 
-// Daftar field yang diperbolehkan untuk sorting.
+// allowedSort mendefinisikan kolom yang diizinkan untuk diurutkan (whitelist).
 var allowedSort = map[string]bool{
 	"id":         true,
 	"nim":        true,
@@ -70,9 +85,9 @@ var allowedSort = map[string]bool{
 	"created_at": true,
 }
 
-// Membaca query string dengan nilai bawaan yang aman.
-func parseListQuery(c *fiber.Ctx) ListQuery {
-	q := ListQuery{
+// Membaca query string dengan nilai default yang aman.
+func parseListQuery(c *fiber.Ctx) model.ListQuery {
+	q := model.ListQuery{
 		Page:   c.QueryInt("page", 1),
 		Limit:  c.QueryInt("limit", 10),
 		Search: strings.TrimSpace(c.Query("search")),
@@ -80,34 +95,26 @@ func parseListQuery(c *fiber.Ctx) ListQuery {
 		Order:  strings.ToLower(c.Query("order", "asc")),
 	}
 
-	// Page minimal 1.
 	if q.Page < 1 {
 		q.Page = 1
 	}
 
-	// Limit minimal 1.
 	if q.Limit < 1 {
 		q.Limit = 10
 	}
 
-	// Batas maksimal 100 data per halaman.
 	if q.Limit > 100 {
 		q.Limit = 100
 	}
 
-	// Jika field sorting tidak diperbolehkan,
-	// gunakan sorting berdasarkan ID.
 	if !allowedSort[q.Sort] {
 		q.Sort = "id"
 	}
 
-	// Hanya menerima asc atau desc.
-	// Selain desc dianggap asc.
 	if q.Order != "desc" {
 		q.Order = "asc"
 	}
 
-	// Membaca filter is_active.
 	if raw := c.Query("is_active"); raw != "" {
 		if v, err := strconv.ParseBool(raw); err == nil {
 			q.IsActive = &v
