@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 
 	"api-students/app/repository"
+	"api-students/app/service"
 	"api-students/config"
 	"api-students/database"
 	"api-students/helper"
@@ -29,7 +30,7 @@ func main() {
 
 	// 3. Dependency Injection: pool -> repository -> handler
 	studentRepository := repository.NewStudentRepository(pool)
-	studentHandler := NewStudentHandler(studentRepository)
+	studentService := service.NewStudentService(studentRepository)
 
 	// 4. Inisialisasi Fiber
 	app := fiber.New(fiber.Config{
@@ -59,12 +60,12 @@ func main() {
 
 	// Routes Students
 	students := api.Group("/students")
-	students.Get("/", studentHandler.List)
-	students.Get("/:id", studentHandler.Get)
-	students.Post("/", studentHandler.Create)
-	students.Put("/:id", studentHandler.Replace)
-	students.Patch("/:id", studentHandler.Patch)
-	students.Delete("/:id", studentHandler.Delete)
+	students.Get("/", studentService.List)
+	students.Get("/:id", studentService.Get)
+	students.Post("/", studentService.Create)
+	students.Put("/:id", studentService.Replace)
+	students.Patch("/:id", studentService.Patch)
+	students.Delete("/:id", studentService.Delete)
 
 	port := config.GetEnv("APP_PORT", "3000")
 	log.Printf("Server API Students berjalan di port %s", port)
