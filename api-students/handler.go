@@ -6,8 +6,10 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+
 	"api-students/app/model"
 	"api-students/app/repository"
+	"api-students/helper"
 )
 
 type StudentHandler struct {
@@ -22,23 +24,23 @@ func NewStudentHandler(repo repository.StudentRepository) *StudentHandler {
 func terjemahkanError(c *fiber.Ctx, err error, pesanUmum string) error {
 	switch {
 	case errors.Is(err, repository.ErrNotFound):
-		return fail(c, fiber.StatusNotFound, "student tidak ditemukan")
+		return helper.Fail(c, fiber.StatusNotFound, "student tidak ditemukan")
 	case errors.Is(err, repository.ErrDuplicate):
-		return fail(c, fiber.StatusConflict, "NIM sudah digunakan")
+		return helper.Fail(c, fiber.StatusConflict, "NIM sudah digunakan")
 	default:
-		return fail(c, fiber.StatusInternalServerError, pesanUmum)
+		return helper.Fail(c, fiber.StatusInternalServerError, pesanUmum)
 	}
 }
 
 func (h *StudentHandler) List(c *fiber.Ctx) error {
-	ctx, cancel := reqCtx(c)
+	ctx, cancel := helper.ReqCtx(c)
 	defer cancel()
 
-	q := parseListQuery(c)
+	q := helper.ParseListQuery(c)
 
 	students, total, err := h.repo.FindAll(ctx, q)
 	if err != nil {
-		return fail(c, fiber.StatusInternalServerError, "gagal mengambil daftar student")
+		return helper.Fail(c, fiber.StatusInternalServerError, "gagal mengambil daftar student")
 	}
 
 	totalPages := 0
@@ -46,7 +48,7 @@ func (h *StudentHandler) List(c *fiber.Ctx) error {
 		totalPages = (total + q.Limit - 1) / q.Limit
 	}
 
-	return okList(c, "daftar student berhasil diambil", students, &model.Meta{
+	return helper.OKList(c, "daftar student berhasil diambil", students, &model.Meta{
 		Page:       q.Page,
 		Limit:      q.Limit,
 		Total:      total,
@@ -55,12 +57,12 @@ func (h *StudentHandler) List(c *fiber.Ctx) error {
 }
 
 func (h *StudentHandler) Get(c *fiber.Ctx) error {
-	ctx, cancel := reqCtx(c)
+	ctx, cancel := helper.ReqCtx(c)
 	defer cancel()
 
-	id, valid := paramID(c)
+	id, valid := helper.ParamID(c)
 	if !valid {
-		return fail(c, fiber.StatusBadRequest, "id tidak valid")
+		return helper.Fail(c, fiber.StatusBadRequest, "id tidak valid")
 	}
 
 	student, err := h.repo.FindByID(ctx, id)
@@ -68,16 +70,16 @@ func (h *StudentHandler) Get(c *fiber.Ctx) error {
 		return terjemahkanError(c, err, "gagal mengambil data student")
 	}
 
-	return ok(c, "student ditemukan", student)
+	return helper.OK(c, "student ditemukan", student)
 }
 
 func (h *StudentHandler) Create(c *fiber.Ctx) error {
-	ctx, cancel := reqCtx(c)
+	ctx, cancel := helper.ReqCtx(c)
 	defer cancel()
 
 	var req model.CreateStudentRequest
 	if err := c.BodyParser(&req); err != nil {
-		return fail(c, fiber.StatusBadRequest, "format JSON tidak valid")
+		return helper.Fail(c, fiber.StatusBadRequest, "format JSON tidak valid")
 	}
 
 	req.NIM = strings.TrimSpace(req.NIM)
@@ -95,7 +97,7 @@ func (h *StudentHandler) Create(c *fiber.Ctx) error {
 	}
 
 	if len(errs) > 0 {
-		return failValidation(c, errs)
+		return helper.FailValidation(c, errs)
 	}
 
 	isActive := true
@@ -113,22 +115,26 @@ func (h *StudentHandler) Create(c *fiber.Ctx) error {
 		return terjemahkanError(c, err, "gagal menyimpan student")
 	}
 
-	return created(c, "student berhasil dibuat", baru,
-		"/api/v1/students/"+strconv.Itoa(baru.ID))
+	return helper.Created(
+		c,
+		"student berhasil dibuat",
+		baru,
+		"/api/v1/students/"+strconv.Itoa(baru.ID),
+	)
 }
 
 func (h *StudentHandler) Replace(c *fiber.Ctx) error {
-	ctx, cancel := reqCtx(c)
+	ctx, cancel := helper.ReqCtx(c)
 	defer cancel()
 
-	id, valid := paramID(c)
+	id, valid := helper.ParamID(c)
 	if !valid {
-		return fail(c, fiber.StatusBadRequest, "id tidak valid")
+		return helper.Fail(c, fiber.StatusBadRequest, "id tidak valid")
 	}
 
 	var req model.ReplaceStudentRequest
 	if err := c.BodyParser(&req); err != nil {
-		return fail(c, fiber.StatusBadRequest, "format JSON tidak valid")
+		return helper.Fail(c, fiber.StatusBadRequest, "format JSON tidak valid")
 	}
 
 	req.NIM = strings.TrimSpace(req.NIM)
@@ -146,7 +152,7 @@ func (h *StudentHandler) Replace(c *fiber.Ctx) error {
 	}
 
 	if len(errs) > 0 {
-		return failValidation(c, errs)
+		return helper.FailValidation(c, errs)
 	}
 
 	hasil, err := h.repo.Update(ctx, model.Student{
@@ -160,25 +166,25 @@ func (h *StudentHandler) Replace(c *fiber.Ctx) error {
 		return terjemahkanError(c, err, "gagal memperbarui student")
 	}
 
-	return ok(c, "student berhasil diperbarui", hasil)
+	return helper.OK(c, "student berhasil diperbarui", hasil)
 }
 
 func (h *StudentHandler) Patch(c *fiber.Ctx) error {
-	ctx, cancel := reqCtx(c)
+	ctx, cancel := helper.ReqCtx(c)
 	defer cancel()
 
-	id, valid := paramID(c)
+	id, valid := helper.ParamID(c)
 	if !valid {
-		return fail(c, fiber.StatusBadRequest, "id tidak valid")
+		return helper.Fail(c, fiber.StatusBadRequest, "id tidak valid")
 	}
 
 	var req model.PatchStudentRequest
 	if err := c.BodyParser(&req); err != nil {
-		return fail(c, fiber.StatusBadRequest, "format JSON tidak valid")
+		return helper.Fail(c, fiber.StatusBadRequest, "format JSON tidak valid")
 	}
 
 	if req.NIM == nil && req.Name == nil && req.Grade == nil && req.IsActive == nil {
-		return fail(c, fiber.StatusBadRequest, "tidak ada field yang diubah")
+		return helper.Fail(c, fiber.StatusBadRequest, "tidak ada field yang diubah")
 	}
 
 	saatIni, err := h.repo.FindByID(ctx, id)
@@ -189,7 +195,9 @@ func (h *StudentHandler) Patch(c *fiber.Ctx) error {
 	if req.NIM != nil {
 		trimmed := strings.TrimSpace(*req.NIM)
 		if trimmed == "" {
-			return failValidation(c, map[string]string{"nim": "NIM tidak boleh kosong"})
+			return helper.FailValidation(c, map[string]string{
+				"nim": "NIM tidak boleh kosong",
+			})
 		}
 		saatIni.NIM = trimmed
 	}
@@ -197,14 +205,18 @@ func (h *StudentHandler) Patch(c *fiber.Ctx) error {
 	if req.Name != nil {
 		trimmed := strings.TrimSpace(*req.Name)
 		if trimmed == "" {
-			return failValidation(c, map[string]string{"name": "nama tidak boleh kosong"})
+			return helper.FailValidation(c, map[string]string{
+				"name": "nama tidak boleh kosong",
+			})
 		}
 		saatIni.Name = trimmed
 	}
 
 	if req.Grade != nil {
 		if *req.Grade < 0 || *req.Grade > 100 {
-			return failValidation(c, map[string]string{"grade": "grade harus antara 0 dan 100"})
+			return helper.FailValidation(c, map[string]string{
+				"grade": "grade harus antara 0 dan 100",
+			})
 		}
 		saatIni.Grade = *req.Grade
 	}
@@ -218,21 +230,21 @@ func (h *StudentHandler) Patch(c *fiber.Ctx) error {
 		return terjemahkanError(c, err, "gagal memperbarui student")
 	}
 
-	return ok(c, "student berhasil diperbarui sebagian", hasil)
+	return helper.OK(c, "student berhasil diperbarui sebagian", hasil)
 }
 
 func (h *StudentHandler) Delete(c *fiber.Ctx) error {
-	ctx, cancel := reqCtx(c)
+	ctx, cancel := helper.ReqCtx(c)
 	defer cancel()
 
-	id, valid := paramID(c)
+	id, valid := helper.ParamID(c)
 	if !valid {
-		return fail(c, fiber.StatusBadRequest, "id tidak valid")
+		return helper.Fail(c, fiber.StatusBadRequest, "id tidak valid")
 	}
 
 	if err := h.repo.Delete(ctx, id); err != nil {
 		return terjemahkanError(c, err, "gagal menghapus student")
 	}
 
-	return noContent(c)
+	return helper.NoContent(c)
 }

@@ -13,6 +13,7 @@ import (
 	"api-students/app/repository"
 	"api-students/config"
 	"api-students/database"
+	"api-students/helper"
 )
 
 func main() {
@@ -46,9 +47,14 @@ func main() {
 		defer cancel()
 
 		if err := pool.Ping(ctx); err != nil {
-			return fail(c, fiber.StatusServiceUnavailable, "database tidak dapat dihubungi")
+			return helper.Fail(
+				c,
+				fiber.StatusServiceUnavailable,
+				"database tidak dapat dihubungi",
+			)
 		}
-		return ok(c, "server dan database berjalan", nil)
+
+		return helper.OK(c, "server dan database berjalan", nil)
 	})
 
 	// Routes Students
