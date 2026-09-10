@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -10,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/golang-jwt/jwt/v5"
 
 	"api-students/app/model"
 	"api-students/app/repository"
@@ -487,8 +485,3 @@ func hashRefreshToken(token string) string {
 	hash := sha256.Sum256([]byte(token))
 	return base64.RawURLEncoding.EncodeToString(hash[:])
 }
-
-// Dummy context reference agar import context tetap digunakan ketika repository
-// membutuhkan context pada pengembangan berikutnya.
-var _ context.Context
-var _ = jwt.ErrTokenExpired
