@@ -15,6 +15,7 @@ import (
 	"api-students/config"
 	"api-students/database"
 	"api-students/helper"
+	"api-students/middleware"
 )
 
 func main() {
@@ -28,9 +29,30 @@ func main() {
 	}
 	defer pool.Close()
 
-	// 3. Dependency Injection: pool -> repository -> handler
+	// 3. Dependency Injection
 	studentRepository := repository.NewStudentRepository(pool)
 	studentService := service.NewStudentService(studentRepository)
+
+	jwtSecret := config.GetEnv("JWT_SECRET", "")
+	if len(jwtSecret) < 32 {
+		log.Fatal("JWT_SECRET tidak diisi atau terlalu pendek")
+	}
+
+	jwtManager := helper.NewJWTManager(
+		jwtSecret,
+		config.GetEnv("JWT_ISSUER", "praktikum-backend"),
+		time.Duration(config.GetEnvInt("JWT_ACCESS_TTL_MINUTES", 15))*time.Minute,
+	)
+
+	userRepository := repository.NewUserRepository(pool)
+	tokenRepository := repository.NewTokenRepository(pool)
+
+	authService := service.NewAuthService(
+		userRepository,
+		tokenRepository,
+		jwtManager,
+		time.Duration(config.GetEnvInt("JWT_REFRESH_TTL_DAYS", 7))*24*time.Hour,
+	)
 
 	// 4. Inisialisasi Fiber
 	app := fiber.New(fiber.Config{
@@ -44,6 +66,7 @@ func main() {
 
 	// Endpoint Health Check
 	api.Get("/health", func(c *fiber.Ctx) error {
+
 		ctx, cancel := context.WithTimeout(c.UserContext(), 2*time.Second)
 		defer cancel()
 
@@ -57,9 +80,16 @@ func main() {
 
 		return helper.OK(c, "server dan database berjalan", nil)
 	})
+	// Routes Auth
+	auth := api.Group("/auth")
+	auth.Post("/register", authService.Register)
+	auth.Post("/login", middleware.LoginRateLimiter(), authService.Login)
+	auth.Post("/refresh", authService.Refresh)
+	auth.Post("/logout", authService.Logout)
+	auth.Get("/me", middleware.RequireAuth(jwtManager), authService.Me)
 
 	// Routes Students
-	students := api.Group("/students")
+	students := api.Group("/students", middleware.RequireAuth(jwtManager))
 	students.Get("/", studentService.List)
 	students.Get("/:id", studentService.Get)
 	students.Post("/", studentService.Create)
