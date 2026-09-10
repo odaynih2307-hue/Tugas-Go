@@ -54,13 +54,17 @@ func main() {
 		time.Duration(config.GetEnvInt("JWT_REFRESH_TTL_DAYS", 7))*24*time.Hour,
 	)
 
-	// 4. Inisialisasi Fiber
 	app := fiber.New(fiber.Config{
-		AppName: "API Students - PostgreSQL & Repository Pattern",
+		AppName:   "API Students - PostgreSQL & Repository Pattern",
+		BodyLimit: 1 * 1024 * 1024,
 	})
 	app.Use(requestid.New())
 	app.Use(logger.New())
-	app.Use(cors.New())
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "http://localhost:5173",
+		AllowMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+		AllowHeaders: "Origin,Content-Type,Accept,Authorization",
+	}))
 
 	api := app.Group("/api/v1")
 
@@ -80,22 +84,69 @@ func main() {
 
 		return helper.OK(c, "server dan database berjalan", nil)
 	})
-	// Routes Auth
 	auth := api.Group("/auth")
-	auth.Post("/register", authService.Register)
-	auth.Post("/login", middleware.LoginRateLimiter(), authService.Login)
-	auth.Post("/refresh", authService.Refresh)
-	auth.Post("/logout", authService.Logout)
-	auth.Get("/me", middleware.RequireAuth(jwtManager), authService.Me)
 
-	// Routes Students
-	students := api.Group("/students", middleware.RequireAuth(jwtManager))
+	auth.Post(
+		"/register",
+		middleware.RequireJSON,
+		authService.Register,
+	)
+
+	auth.Post(
+		"/login",
+		middleware.RequireJSON,
+		middleware.LoginRateLimiter(),
+		authService.Login,
+	)
+
+	auth.Post(
+		"/refresh",
+		middleware.RequireJSON,
+		authService.Refresh,
+	)
+
+	auth.Post(
+		"/logout",
+		middleware.RequireJSON,
+		authService.Logout,
+	)
+
+	auth.Get(
+		"/me",
+		middleware.RequireAuth(jwtManager),
+		authService.Me,
+	)
+
+	students := api.Group(
+		"/students",
+		middleware.RequireAuth(jwtManager),
+	)
+
 	students.Get("/", studentService.List)
 	students.Get("/:id", studentService.Get)
-	students.Post("/", studentService.Create)
-	students.Put("/:id", studentService.Replace)
-	students.Patch("/:id", studentService.Patch)
-	students.Delete("/:id", studentService.Delete)
+
+	students.Post(
+		"/",
+		middleware.RequireJSON,
+		studentService.Create,
+	)
+
+	students.Put(
+		"/:id",
+		middleware.RequireJSON,
+		studentService.Replace,
+	)
+
+	students.Patch(
+		"/:id",
+		middleware.RequireJSON,
+		studentService.Patch,
+	)
+
+	students.Delete(
+		"/:id",
+		studentService.Delete,
+	)
 
 	port := config.GetEnv("APP_PORT", "3000")
 	log.Printf("Server API Students berjalan di port %s", port)
