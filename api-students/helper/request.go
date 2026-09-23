@@ -16,6 +16,28 @@ func ReqCtx(c *fiber.Ctx) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(c.UserContext(), 5*time.Second)
 }
 
+// RequestContext adalah alias dari ReqCtx.
+func RequestContext(c *fiber.Ctx) (context.Context, context.CancelFunc) {
+	return ReqCtx(c)
+}
+
+// CurrentUser mengambil data AuthUser dari locals context fiber.
+func CurrentUser(c *fiber.Ctx) (model.AuthUser, bool) {
+	userID, okID := c.Locals("user_id").(int)
+	role, okRole := c.Locals("role").(string)
+	username, _ := c.Locals("username").(string)
+
+	if !okID || !okRole {
+		return model.AuthUser{}, false
+	}
+
+	return model.AuthUser{
+		UserID:   userID,
+		Username: username,
+		Role:     role,
+	}, true
+}
+
 // ParamID membaca ID dari URL params dan memvalidasi nilainya berupa angka positif.
 func ParamID(c *fiber.Ctx) (int, bool) {
 	id, err := c.ParamsInt("id")
