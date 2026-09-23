@@ -3,11 +3,12 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
+	"os"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 
 	"api-students/app/repository"
@@ -16,23 +17,39 @@ import (
 	"api-students/database"
 	"api-students/helper"
 	"api-students/middleware"
+	"api-students/route"
 )
 
 func main() {
-	// 1. Konfigurasi Environment
+	// 1. Inisialisasi Logger & Konfigurasi Environment
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 	config.LoadEnv()
 
 	// 2. Koneksi Basis Data
 	pool, err := database.NewPool(context.Background())
 	if err != nil {
-		log.Fatalf("database: %v", err)
+		logger.Error("gagal terhubung ke database", slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 	defer pool.Close()
 
-	// 3. Dependency Injection
+	// 3. Inisialisasi Repository
 	studentRepository := repository.NewStudentRepository(pool)
-	studentService := service.NewStudentService(studentRepository)
+	userRepository := repository.NewUserRepository(pool)
+	tokenRepository := repository.NewTokenRepository(pool)
+	roleRepository := repository.NewRoleRepository(pool)
 
+	// 4. Memuat Pemetaan Hak Akses (PermissionSet) Sekali Saat Aplikasi Menyala (Fail-Closed)
+	rawPermissions, err := roleRepository.LoadPermissions(context.Background())
+	if err != nil {
+		logger.Error("gagal memuat permission", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	permissions := helper.NewPermissionSet(rawPermissions)
+	logger.Info("permission dimuat", slog.Any("roles", permissions.KnownRoles()))
+
+	// 5. Inisialisasi JWT Manager
 	jwtSecret := config.GetEnv("JWT_SECRET", "")
 	if len(jwtSecret) < 32 {
 		log.Fatal("JWT_SECRET tidak diisi atau terlalu pendek")
@@ -44,111 +61,41 @@ func main() {
 		time.Duration(config.GetEnvInt("JWT_ACCESS_TTL_MINUTES", 15))*time.Minute,
 	)
 
-	userRepository := repository.NewUserRepository(pool)
-	tokenRepository := repository.NewTokenRepository(pool)
-
+	// 6. Inisialisasi Service Layer
+	userService := service.NewUserService(userRepository, permissions)
+	studentService := service.NewStudentService(studentRepository, permissions)
 	authService := service.NewAuthService(
 		userRepository,
 		tokenRepository,
 		jwtManager,
+		permissions,
 		time.Duration(config.GetEnvInt("JWT_REFRESH_TTL_DAYS", 7))*24*time.Hour,
 	)
 
+	// 7. Setup Web Server Fiber & Middleware
 	app := fiber.New(fiber.Config{
-		AppName:   "API Students - PostgreSQL & Repository Pattern",
+		AppName:   "API Students & Users - RBAC & Authorization (Modul 6)",
 		BodyLimit: 1 * 1024 * 1024,
 	})
 	app.Use(requestid.New())
-	app.Use(logger.New())
+	app.Use(middleware.RequestLogger(logger))
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "http://localhost:5173",
 		AllowMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
 		AllowHeaders: "Origin,Content-Type,Accept,Authorization",
 	}))
 
-	api := app.Group("/api/v1")
-
-	// Endpoint Health Check
-	api.Get("/health", func(c *fiber.Ctx) error {
-
-		ctx, cancel := context.WithTimeout(c.UserContext(), 2*time.Second)
-		defer cancel()
-
-		if err := pool.Ping(ctx); err != nil {
-			return helper.Fail(
-				c,
-				fiber.StatusServiceUnavailable,
-				"database tidak dapat dihubungi",
-			)
-		}
-
-		return helper.OK(c, "server dan database berjalan", nil)
+	// 8. Registrasi Routing Terpusat (Access Control Map)
+	route.Register(app, route.Dependencies{
+		Pool:           pool,
+		JWT:            jwtManager,
+		Permissions:    permissions,
+		UserService:    userService,
+		AuthService:    authService,
+		StudentService: studentService,
 	})
-	auth := api.Group("/auth")
-
-	auth.Post(
-		"/register",
-		middleware.RequireJSON,
-		authService.Register,
-	)
-
-	auth.Post(
-		"/login",
-		middleware.RequireJSON,
-		middleware.LoginRateLimiter(),
-		authService.Login,
-	)
-
-	auth.Post(
-		"/refresh",
-		middleware.RequireJSON,
-		authService.Refresh,
-	)
-
-	auth.Post(
-		"/logout",
-		middleware.RequireJSON,
-		authService.Logout,
-	)
-
-	auth.Get(
-		"/me",
-		middleware.RequireAuth(jwtManager),
-		authService.Me,
-	)
-
-	students := api.Group(
-		"/students",
-		middleware.RequireAuth(jwtManager),
-	)
-
-	students.Get("/", studentService.List)
-	students.Get("/:id", studentService.Get)
-
-	students.Post(
-		"/",
-		middleware.RequireJSON,
-		studentService.Create,
-	)
-
-	students.Put(
-		"/:id",
-		middleware.RequireJSON,
-		studentService.Replace,
-	)
-
-	students.Patch(
-		"/:id",
-		middleware.RequireJSON,
-		studentService.Patch,
-	)
-
-	students.Delete(
-		"/:id",
-		studentService.Delete,
-	)
 
 	port := config.GetEnv("APP_PORT", "3000")
-	log.Printf("Server API Students berjalan di port %s", port)
+	logger.Info("Server berjalan", slog.String("port", port))
 	log.Fatal(app.Listen(":" + port))
 }
