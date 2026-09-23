@@ -13,11 +13,18 @@ import (
 )
 
 type StudentService struct {
-	repo repository.StudentRepository
+	repo  repository.StudentRepository
+	perms *helper.PermissionSet
 }
 
-func NewStudentService(repo repository.StudentRepository) *StudentService {
-	return &StudentService{repo: repo}
+func NewStudentService(
+	repo repository.StudentRepository,
+	perms *helper.PermissionSet,
+) *StudentService {
+	return &StudentService{
+		repo:  repo,
+		perms: perms,
+	}
 }
 
 // terjemahkanError memetakan error repository ke HTTP response yang sesuai.
@@ -34,8 +41,10 @@ func terjemahkanError(c *fiber.Ctx, err error, pesanUmum string) error {
 	}
 }
 
+// ---------- GET /students ----------
+// Dijaga oleh middleware RequirePermission(perms, "student:list")
 func (s *StudentService) List(c *fiber.Ctx) error {
-	ctx, cancel := helper.ReqCtx(c)
+	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
 
 	q := helper.ParseListQuery(c)
@@ -64,9 +73,16 @@ func (s *StudentService) List(c *fiber.Ctx) error {
 	)
 }
 
+// ---------- GET /students/:id ----------
+// Memeriksa kepemilikan data: pemilik data selalu boleh, selain itu perlu student:read:any
 func (s *StudentService) Get(c *fiber.Ctx) error {
-	ctx, cancel := helper.ReqCtx(c)
+	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
+
+	current, ok := helper.CurrentUser(c)
+	if !ok {
+		return helper.Fail(c, fiber.StatusUnauthorized, "belum terautentikasi")
+	}
 
 	id, valid := helper.ParamID(c)
 	if !valid {
@@ -86,12 +102,29 @@ func (s *StudentService) Get(c *fiber.Ctx) error {
 		)
 	}
 
+	// Pemeriksaan Kepemilikan (Ownership) & Permission
+	if !CanAccessStudent(current, student.OwnerID, s.perms, "student:read:any") {
+		return helper.Fail(
+			c,
+			fiber.StatusForbidden,
+			"tidak berhak mengakses data student ini",
+		)
+	}
+
 	return helper.OK(c, "student ditemukan", student)
 }
 
+// ---------- POST /students ----------
+// Dijaga oleh middleware RequirePermission(perms, "student:create")
+// owner_id otomatis diisi dari identitas pemanggil (c.Locals / CurrentUser)
 func (s *StudentService) Create(c *fiber.Ctx) error {
-	ctx, cancel := helper.ReqCtx(c)
+	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
+
+	current, ok := helper.CurrentUser(c)
+	if !ok {
+		return helper.Fail(c, fiber.StatusUnauthorized, "belum terautentikasi")
+	}
 
 	var req model.CreateStudentRequest
 
@@ -115,11 +148,13 @@ func (s *StudentService) Create(c *fiber.Ctx) error {
 		isActive = *req.IsActive
 	}
 
+	// owner_id DIKUNCI dari token autentikasi pemanggil, TIDAK BISA dipalsukan dari request body
 	baru, err := s.repo.Create(ctx, model.Student{
 		NIM:      req.NIM,
 		Name:     req.Name,
 		Grade:    req.Grade,
 		IsActive: isActive,
+		OwnerID:  current.UserID,
 	})
 
 	if err != nil {
@@ -138,9 +173,16 @@ func (s *StudentService) Create(c *fiber.Ctx) error {
 	)
 }
 
+// ---------- PUT /students/:id ----------
+// Memeriksa kepemilikan data: pemilik data selalu boleh, selain itu perlu student:update:any
 func (s *StudentService) Replace(c *fiber.Ctx) error {
-	ctx, cancel := helper.ReqCtx(c)
+	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
+
+	current, ok := helper.CurrentUser(c)
+	if !ok {
+		return helper.Fail(c, fiber.StatusUnauthorized, "belum terautentikasi")
+	}
 
 	id, valid := helper.ParamID(c)
 	if !valid {
@@ -148,6 +190,24 @@ func (s *StudentService) Replace(c *fiber.Ctx) error {
 			c,
 			fiber.StatusBadRequest,
 			"id tidak valid",
+		)
+	}
+
+	saatIni, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		return terjemahkanError(
+			c,
+			err,
+			"gagal mengambil data student",
+		)
+	}
+
+	// Pemeriksaan Kepemilikan (Ownership) & Permission
+	if !CanAccessStudent(current, saatIni.OwnerID, s.perms, "student:update:any") {
+		return helper.Fail(
+			c,
+			fiber.StatusForbidden,
+			"tidak berhak mengubah data student ini",
 		)
 	}
 
@@ -191,9 +251,16 @@ func (s *StudentService) Replace(c *fiber.Ctx) error {
 	)
 }
 
+// ---------- PATCH /students/:id ----------
+// Memeriksa kepemilikan data: pemilik data selalu boleh, selain itu perlu student:update:any
 func (s *StudentService) Patch(c *fiber.Ctx) error {
-	ctx, cancel := helper.ReqCtx(c)
+	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
+
+	current, ok := helper.CurrentUser(c)
+	if !ok {
+		return helper.Fail(c, fiber.StatusUnauthorized, "belum terautentikasi")
+	}
 
 	id, valid := helper.ParamID(c)
 	if !valid {
@@ -231,6 +298,15 @@ func (s *StudentService) Patch(c *fiber.Ctx) error {
 		)
 	}
 
+	// Pemeriksaan Kepemilikan (Ownership) & Permission
+	if !CanAccessStudent(current, saatIni.OwnerID, s.perms, "student:update:any") {
+		return helper.Fail(
+			c,
+			fiber.StatusForbidden,
+			"tidak berhak mengubah data student ini",
+		)
+	}
+
 	hasilPatch, errs := ApplyPatch(saatIni, req)
 
 	if len(errs) > 0 {
@@ -253,8 +329,10 @@ func (s *StudentService) Patch(c *fiber.Ctx) error {
 	)
 }
 
+// ---------- DELETE /students/:id ----------
+// Dijaga oleh middleware RequirePermission(perms, "student:delete")
 func (s *StudentService) Delete(c *fiber.Ctx) error {
-	ctx, cancel := helper.ReqCtx(c)
+	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
 
 	id, valid := helper.ParamID(c)
