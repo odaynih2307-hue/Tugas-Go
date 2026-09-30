@@ -15,7 +15,7 @@ bin/
 # Reports and documentations
 *laporan*
 *LAPORAN*
-generate_pdf.py
+*.py
 *.png
 screenshots/
 
