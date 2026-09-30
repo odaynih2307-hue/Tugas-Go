@@ -11,6 +11,7 @@ bin/
 
 # PDF files
 *.pdf
+!latihan-fiber/UTS/*.pdf
 
 # Logs
 *.log
