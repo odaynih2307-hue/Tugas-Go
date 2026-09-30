@@ -11,7 +11,13 @@ bin/
 
 # PDF files
 *.pdf
-!latihan-fiber/UTS/*.pdf
+
+# Reports and documentations
+*laporan*
+*LAPORAN*
+generate_pdf.py
+*.png
+screenshots/
 
 # Logs
 *.log
@@ -19,3 +25,4 @@ logs/
 
 # Test artifacts
 scratch/
+
