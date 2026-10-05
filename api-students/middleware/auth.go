@@ -21,11 +21,7 @@ func RequireAuth(jwtManager *helper.JWTManager) fiber.Handler {
 
 		if authHeader == "" {
 			c.Set("WWW-Authenticate", `Bearer realm="api"`)
-			return helper.Fail(
-				c,
-				fiber.StatusUnauthorized,
-				"token akses diperlukan",
-			)
+			return helper.Unauthorized("token akses diperlukan")
 		}
 
 		const bearerPrefix = "Bearer "
@@ -33,11 +29,7 @@ func RequireAuth(jwtManager *helper.JWTManager) fiber.Handler {
 		if len(authHeader) <= len(bearerPrefix) ||
 			authHeader[:len(bearerPrefix)] != bearerPrefix {
 			c.Set("WWW-Authenticate", `Bearer realm="api"`)
-			return helper.Fail(
-				c,
-				fiber.StatusUnauthorized,
-				"format Authorization tidak valid",
-			)
+			return helper.Unauthorized("format Authorization tidak valid")
 		}
 
 		tokenString := authHeader[len(bearerPrefix):]
@@ -47,18 +39,10 @@ func RequireAuth(jwtManager *helper.JWTManager) fiber.Handler {
 			c.Set("WWW-Authenticate", `Bearer realm="api"`)
 
 			if errors.Is(err, jwt.ErrTokenExpired) {
-				return helper.Fail(
-					c,
-					fiber.StatusUnauthorized,
-					"access token sudah kedaluwarsa",
-				)
+				return helper.Unauthorized("access token sudah kedaluwarsa")
 			}
 
-			return helper.Fail(
-				c,
-				fiber.StatusUnauthorized,
-				"access token tidak valid",
-			)
+			return helper.Unauthorized("access token tidak valid")
 		}
 
 		c.Locals(LocalsUserID, claims.UserID)

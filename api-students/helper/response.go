@@ -6,7 +6,7 @@ import (
 	"api-students/app/model"
 )
 
-// Response berhasil dengan status 200.
+// OK mengembalikan response berhasil standar dengan status 200.
 func OK(c *fiber.Ctx, message string, data any) error {
 	return c.Status(fiber.StatusOK).JSON(model.WebResponse{
 		Success: true,
@@ -15,7 +15,26 @@ func OK(c *fiber.Ctx, message string, data any) error {
 	})
 }
 
-// Response berhasil untuk daftar data dengan informasi pagination.
+// Success mengembalikan response berhasil dengan status HTTP custom.
+func Success(c *fiber.Ctx, status int, message string, data any) error {
+	return c.Status(status).JSON(model.WebResponse{
+		Success: true,
+		Message: message,
+		Data:    data,
+	})
+}
+
+// SuccessCursor mengembalikan response berhasil untuk endpoint yang memakai cursor pagination.
+func SuccessCursor(c *fiber.Ctx, message string, data any, meta *model.CursorMeta) error {
+	return c.Status(fiber.StatusOK).JSON(model.WebCursorResponse{
+		Success: true,
+		Message: message,
+		Data:    data,
+		Meta:    meta,
+	})
+}
+
+// OKList mengembalikan response berhasil untuk daftar data dengan informasi pagination offset.
 func OKList(c *fiber.Ctx, message string, data any, meta *model.Meta) error {
 	return c.Status(fiber.StatusOK).JSON(model.WebResponse{
 		Success: true,
@@ -25,7 +44,7 @@ func OKList(c *fiber.Ctx, message string, data any, meta *model.Meta) error {
 	})
 }
 
-// Response berhasil membuat data baru dengan status 201 dan header Location.
+// Created mengembalikan response berhasil membuat data baru dengan status 201 dan header Location.
 func Created(c *fiber.Ctx, message string, data any, location string) error {
 	c.Set("Location", location)
 
@@ -36,24 +55,13 @@ func Created(c *fiber.Ctx, message string, data any, location string) error {
 	})
 }
 
-// Response berhasil tanpa body dengan status 204.
+// NoContent mengembalikan response berhasil tanpa body dengan status 204.
 func NoContent(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-// Response error umum.
-func Fail(c *fiber.Ctx, status int, message string) error {
-	return c.Status(status).JSON(model.WebResponse{
-		Success: false,
-		Message: message,
-	})
-}
-
-// Response khusus validasi dengan status 422.
-func FailValidation(c *fiber.Ctx, errs map[string]string) error {
-	return c.Status(fiber.StatusUnprocessableEntity).JSON(model.WebResponse{
-		Success: false,
-		Message: "validasi gagal",
-		Errors:  errs,
-	})
-}
+// CATATAN ARSITEKTUR MODUL 7:
+// helper.Fail dan helper.FailValidation DIHAPUS seluruhnya sesuai instruksi Langkah 4 modul:
+// "Hapus helper.Fail dan helper.FailValidation seluruhnya. Selama keduanya masih ada,
+// akan selalu ada godaan memakainya — dan satu pemakaian saja sudah cukup untuk membuat
+// bentuk response tidak lagi seragam. Menghapusnya membuat compiler yang menegakkan aturan ini."
