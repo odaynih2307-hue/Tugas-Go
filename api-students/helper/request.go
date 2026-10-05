@@ -21,6 +21,17 @@ func RequestContext(c *fiber.Ctx) (context.Context, context.CancelFunc) {
 	return ReqCtx(c)
 }
 
+// RequestID mengambil request ID dari locals context atau header X-Request-Id.
+func RequestID(c *fiber.Ctx) string {
+	if reqID, ok := c.Locals("requestid").(string); ok && reqID != "" {
+		return reqID
+	}
+	if reqID := c.Get("X-Request-Id"); reqID != "" {
+		return reqID
+	}
+	return ""
+}
+
 // CurrentUser mengambil data AuthUser dari locals context fiber.
 func CurrentUser(c *fiber.Ctx) (model.AuthUser, bool) {
 	userID, okID := c.Locals("user_id").(int)
