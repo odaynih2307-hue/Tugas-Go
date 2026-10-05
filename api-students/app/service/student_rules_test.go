@@ -4,16 +4,17 @@ import (
 	"testing"
 
 	"api-students/app/model"
+	"api-students/helper"
 )
 
-func TestValidateCreate(t *testing.T) {
+func TestValidateCreateStudent(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   model.CreateStudentRequest
 		wantErr bool
 	}{
 		{
-			name: "data valid",
+			name: "data valid dengan NIM 12 digit",
 			input: model.CreateStudentRequest{
 				NIM:   "082211133002",
 				Name:  "Budi Santoso",
@@ -31,6 +32,24 @@ func TestValidateCreate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "NIM format salah (kurang dari 11 digit)",
+			input: model.CreateStudentRequest{
+				NIM:   "12345",
+				Name:  "Budi Santoso",
+				Grade: 85,
+			},
+			wantErr: true,
+		},
+		{
+			name: "nama terlalu pendek (< 3 karakter)",
+			input: model.CreateStudentRequest{
+				NIM:   "082211133002",
+				Name:  "Al",
+				Grade: 85,
+			},
+			wantErr: true,
+		},
+		{
 			name: "grade lebih dari 100",
 			input: model.CreateStudentRequest{
 				NIM:   "082211133002",
@@ -43,11 +62,11 @@ func TestValidateCreate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errs := ValidateCreate(tt.input)
+			errs := helper.ValidateStruct(tt.input)
 
 			if (len(errs) > 0) != tt.wantErr {
 				t.Errorf(
-					"ValidateCreate() errors = %v, wantErr %v",
+					"ValidateStruct() errors = %v, wantErr %v",
 					errs,
 					tt.wantErr,
 				)
@@ -56,7 +75,7 @@ func TestValidateCreate(t *testing.T) {
 	}
 }
 
-func TestValidateReplace(t *testing.T) {
+func TestValidateReplaceStudent(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   model.ReplaceStudentRequest
@@ -96,11 +115,11 @@ func TestValidateReplace(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errs := ValidateReplace(tt.input)
+			errs := helper.ValidateStruct(tt.input)
 
 			if (len(errs) > 0) != tt.wantErr {
 				t.Errorf(
-					"ValidateReplace() errors = %v, wantErr %v",
+					"ValidateStruct() errors = %v, wantErr %v",
 					errs,
 					tt.wantErr,
 				)
@@ -109,7 +128,7 @@ func TestValidateReplace(t *testing.T) {
 	}
 }
 
-func TestApplyPatch(t *testing.T) {
+func TestApplyPatchStudent(t *testing.T) {
 	nameBaru := "Andi Wijaya"
 	gradeBaru := 95.0
 
@@ -126,11 +145,13 @@ func TestApplyPatch(t *testing.T) {
 		Grade: &gradeBaru,
 	}
 
-	result, errs := ApplyPatch(current, req)
-
+	// Validasi deklaratif menggunakan omitnil
+	errs := helper.ValidateStruct(req)
 	if len(errs) > 0 {
-		t.Errorf("ApplyPatch() menghasilkan error: %v", errs)
+		t.Fatalf("ValidateStruct() unexpected error: %v", errs)
 	}
+
+	result := ApplyPatchStudent(current, req)
 
 	if result.Name != "Andi Wijaya" {
 		t.Errorf(
