@@ -11,9 +11,10 @@ import (
 	"api-students/app/model"
 )
 
+// Sentinel error aliases for user repository.
 var (
-	ErrUserNotFound = errors.New("user tidak ditemukan")
-	ErrUserExists   = errors.New("username sudah digunakan")
+	ErrUserNotFound = ErrNotFound
+	ErrUserExists   = ErrDuplicate
 )
 
 type UserRepository struct {
@@ -33,22 +34,26 @@ func (r *UserRepository) Create(
 	role string,
 ) (*model.User, error) {
 	var user model.User
+	email := username + "@unair.ac.id"
 
 	err := r.pool.QueryRow(
 		ctx,
 		`
-		INSERT INTO users (username, password, role)
-		VALUES ($1, $2, $3)
-		RETURNING id, username, password, role, created_at
+		INSERT INTO users (username, email, password, role, is_active)
+		VALUES ($1, $2, $3, $4, true)
+		RETURNING id, username, email, password, role, is_active, created_at
 		`,
 		username,
+		email,
 		passwordHash,
 		role,
 	).Scan(
 		&user.ID,
 		&user.Username,
+		&user.Email,
 		&user.Password,
 		&user.Role,
+		&user.IsActive,
 		&user.CreatedAt,
 	)
 
@@ -72,7 +77,7 @@ func (r *UserRepository) FindByUsername(
 	err := r.pool.QueryRow(
 		ctx,
 		`
-		SELECT id, username, password, role, created_at
+		SELECT id, username, email, password, role, is_active, created_at
 		FROM users
 		WHERE username = $1
 		`,
@@ -80,8 +85,10 @@ func (r *UserRepository) FindByUsername(
 	).Scan(
 		&user.ID,
 		&user.Username,
+		&user.Email,
 		&user.Password,
 		&user.Role,
+		&user.IsActive,
 		&user.CreatedAt,
 	)
 
@@ -105,7 +112,7 @@ func (r *UserRepository) FindByID(
 	err := r.pool.QueryRow(
 		ctx,
 		`
-		SELECT id, username, password, role, created_at
+		SELECT id, username, email, password, role, is_active, created_at
 		FROM users
 		WHERE id = $1
 		`,
@@ -113,8 +120,10 @@ func (r *UserRepository) FindByID(
 	).Scan(
 		&user.ID,
 		&user.Username,
+		&user.Email,
 		&user.Password,
 		&user.Role,
+		&user.IsActive,
 		&user.CreatedAt,
 	)
 
@@ -127,6 +136,70 @@ func (r *UserRepository) FindByID(
 	}
 
 	return &user, nil
+}
+
+// FindAfterCursor mengambil satu halaman memakai keyset pagination (Langkah 7).
+//
+// id ikut dibandingkan karena created_at TIDAK dijamin unik. Bila dua
+// baris dibuat pada mikrodetik yang sama dan hanya created_at yang
+// dibandingkan, salah satu baris akan terlewat atau terkirim dua kali.
+//
+// Jumlah yang diminta sengaja limit+1. Baris tambahan itu tidak dikirim
+// ke client; keberadaannya hanya dipakai untuk menjawab "masih ada
+// halaman berikutnya?" tanpa perlu COUNT(*) atas seluruh tabel.
+//
+// Catatan Perbaikan Bug Modul Bagian B:
+// Pada Bagian B Langkah 7, query SQL menggunakan `ORDER BY created_at ASC, id ASC`.
+// Hal tersebut menyebabkan urutan terbalik dari yang disyaratkan (data terbaru harus di awal)
+// dan kondisi keyset (created_at, id) < ($1, $2) tidak bekerja secara benar.
+// Kami memperbaikinya menjadi: `ORDER BY created_at DESC, id DESC`.
+func (r *UserRepository) FindAfterCursor(
+	ctx context.Context, q model.CursorQuery,
+) ([]model.User, error) {
+	args := []any{}
+	where := " WHERE 1 = 1"
+
+	if q.Search != "" {
+		args = append(args, "%"+q.Search+"%")
+		where += fmt.Sprintf(" AND username ILIKE $%d", len(args))
+	}
+
+	if q.IsActive != nil {
+		args = append(args, *q.IsActive)
+		where += fmt.Sprintf(" AND is_active = $%d", len(args))
+	}
+
+	if q.After != nil {
+		args = append(args, q.After.CreatedAt, q.After.ID)
+		where += fmt.Sprintf(" AND (created_at, id) < ($%d, $%d)",
+			len(args)-1, len(args))
+	}
+
+	args = append(args, q.Limit+1)
+	query := fmt.Sprintf(
+		"SELECT id, username, email, password, role, is_active, created_at FROM users%s ORDER BY created_at DESC, id DESC LIMIT $%d",
+		where, len(args))
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("mengambil daftar user: %w", err)
+	}
+	defer rows.Close()
+
+	result := []model.User{}
+	for rows.Next() {
+		var u model.User
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Password, &u.Role, &u.IsActive, &u.CreatedAt); err != nil {
+			return nil, fmt.Errorf("membaca row user: %w", err)
+		}
+		result = append(result, u)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("membaca hasil query: %w", err)
+	}
+
+	return result, nil
 }
 
 func (r *UserRepository) FindAll(ctx context.Context, q model.ListQuery) ([]model.User, int, error) {
@@ -155,7 +228,7 @@ func (r *UserRepository) FindAll(ctx context.Context, q model.ListQuery) ([]mode
 	}
 
 	sqlText := fmt.Sprintf(
-		`SELECT id, username, password, role, created_at
+		`SELECT id, username, email, password, role, is_active, created_at
 		 FROM users%s
 		 ORDER BY %s %s
 		 LIMIT $%d OFFSET $%d`,
@@ -172,7 +245,7 @@ func (r *UserRepository) FindAll(ctx context.Context, q model.ListQuery) ([]mode
 	users := []model.User{}
 	for rows.Next() {
 		var u model.User
-		if err := rows.Scan(&u.ID, &u.Username, &u.Password, &u.Role, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Password, &u.Role, &u.IsActive, &u.CreatedAt); err != nil {
 			return nil, 0, fmt.Errorf("membaca baris user: %w", err)
 		}
 		users = append(users, u)
@@ -192,11 +265,11 @@ func (r *UserRepository) Update(
 	var user model.User
 	err := r.pool.QueryRow(
 		ctx,
-		`UPDATE users SET username = $1
-		 WHERE id = $2
-		 RETURNING id, username, password, role, created_at`,
-		u.Username, u.ID,
-	).Scan(&user.ID, &user.Username, &user.Password, &user.Role, &user.CreatedAt)
+		`UPDATE users SET username = $1, email = $2, is_active = $3
+		 WHERE id = $4
+		 RETURNING id, username, email, password, role, is_active, created_at`,
+		u.Username, u.Email, u.IsActive, u.ID,
+	).Scan(&user.ID, &user.Username, &user.Email, &user.Password, &user.Role, &user.IsActive, &user.CreatedAt)
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -223,9 +296,9 @@ func (r *UserRepository) UpdateRole(
 		ctx,
 		`UPDATE users SET role = $1
 		 WHERE id = $2
-		 RETURNING id, username, password, role, created_at`,
+		 RETURNING id, username, email, password, role, is_active, created_at`,
 		role, id,
-	).Scan(&user.ID, &user.Username, &user.Password, &user.Role, &user.CreatedAt)
+	).Scan(&user.ID, &user.Username, &user.Email, &user.Password, &user.Role, &user.IsActive, &user.CreatedAt)
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

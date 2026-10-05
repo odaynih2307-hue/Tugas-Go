@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -23,14 +24,26 @@ func NewUserService(
 	return &UserService{repo: repo, perms: perms}
 }
 
-func terjemahkanUserError(c *fiber.Ctx, err error, fallback string) error {
+// translateUserError mengubah error milik repository menjadi AppError terpusat.
+//
+// Perhatikan tanda tangannya: tidak ada fiber.Ctx. Fungsi ini hanya
+// menerjemahkan satu jenis error menjadi jenis lain, dan tidak tahu
+// apa pun tentang HTTP. Yang tidak dikenali menjadi Internal — fail
+// closed: lebih baik membalas 500 daripada menebak-nebak status.
+//
+// Catatan Perbaikan Bug Modul Bagian B:
+// Pada Bagian B Langkah 4, blok default pada fungsi ini mengembalikan `nil`.
+// Akibatnya bila basis data mengalami gangguan tak terduga, handler menganggap
+// tidak ada error dan membalas 200 OK dengan body kosong.
+// Kami memperbaikinya menjadi: `default: return helper.Internal(err)`.
+func translateUserError(err error, entity string) error {
 	switch {
-	case errors.Is(err, repository.ErrUserNotFound):
-		return helper.Fail(c, fiber.StatusNotFound, "user tidak ditemukan")
-	case errors.Is(err, repository.ErrUserExists):
-		return helper.Fail(c, fiber.StatusConflict, "username sudah digunakan")
+	case errors.Is(err, repository.ErrUserNotFound), errors.Is(err, repository.ErrNotFound):
+		return helper.NotFound(entity + " tidak ditemukan")
+	case errors.Is(err, repository.ErrUserExists), errors.Is(err, repository.ErrDuplicate):
+		return helper.Conflict("username sudah dipakai")
 	default:
-		return helper.Fail(c, fiber.StatusInternalServerError, fallback)
+		return helper.Internal(err)
 	}
 }
 
@@ -41,35 +54,59 @@ func (s *UserService) safeUser(user *model.User) *model.User {
 	return &model.User{
 		ID:        user.ID,
 		Username:  user.Username,
+		Email:     user.Email,
 		Role:      user.Role,
+		IsActive:  user.IsActive,
 		CreatedAt: user.CreatedAt,
 	}
 }
 
-// ---------- GET /users ----------
+// ---------- GET /users (Cursor Pagination & Content Negotiation) ----------
 func (s *UserService) List(c *fiber.Ctx) error {
 	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
 
-	q := helper.ParseListQuery(c)
-	users, total, err := s.repo.FindAll(ctx, q)
+	// Format dipilih SEBELUM query dijalankan. Bila client meminta format
+	// yang tidak dapat kita hasilkan, tidak ada gunanya membebani database
+	// untuk hasil yang akan dibuang (Langkah 8).
+	format, err := helper.Negotiate(c, helper.FormatJSON, helper.FormatCSV)
 	if err != nil {
-		return helper.Fail(c, fiber.StatusInternalServerError, "gagal mengambil daftar user")
+		return err
 	}
 
-	safeUsers := make([]model.User, len(users))
-	for i, u := range users {
+	q, err := helper.ParseCursorQuery(c)
+	if err != nil {
+		return err
+	}
+
+	rows, err := s.repo.FindAfterCursor(ctx, q)
+	if err != nil {
+		return helper.Internal(err)
+	}
+
+	if format == helper.FormatCSV {
+		return helper.WriteUsersCSV(c, rows)
+	}
+
+	// Baris tambahan hasil limit+1 dipotong di sini. Ia hanya penanda bahwa
+	// masih ada halaman berikutnya, bukan bagian dari halaman ini.
+	hasMore := len(rows) > q.Limit
+	if hasMore {
+		rows = rows[:q.Limit]
+	}
+
+	safeUsers := make([]model.User, len(rows))
+	for i, u := range rows {
 		safeUsers[i] = *s.safeUser(&u)
 	}
 
-	totalPages := CountTotalPages(total, q.Limit)
+	meta := &model.CursorMeta{Limit: q.Limit, HasMore: hasMore}
+	if hasMore && len(safeUsers) > 0 {
+		last := safeUsers[len(safeUsers)-1]
+		meta.NextCursor = helper.EncodeCursor(last.CreatedAt, last.ID)
+	}
 
-	return helper.OKList(c, "daftar user berhasil diambil", safeUsers, &model.Meta{
-		Page:       q.Page,
-		Limit:      q.Limit,
-		Total:      total,
-		TotalPages: totalPages,
-	})
+	return helper.SuccessCursor(c, "daftar user berhasil diambil", safeUsers, meta)
 }
 
 // ---------- GET /users/:id ----------
@@ -79,26 +116,26 @@ func (s *UserService) Get(c *fiber.Ctx) error {
 
 	current, ok := helper.CurrentUser(c)
 	if !ok {
-		return helper.Fail(c, fiber.StatusUnauthorized, "belum terautentikasi")
+		return helper.Unauthorized("belum terautentikasi")
 	}
 
 	id, valid := helper.ParamID(c)
 	if !valid {
-		return helper.Fail(c, fiber.StatusBadRequest, "id harus berupa angka positif")
+		return helper.BadRequest("id harus berupa angka positif")
 	}
 
 	// Pemeriksaan hak akses dilakukan SEBELUM data diambil.
 	// Mitigasi timing attack: tidak ada perbedaan waktu tanggap antara id ada dan tidak ada.
 	if !CanAccessUser(current, id, s.perms, "user:read:any") {
-		return helper.Fail(c, fiber.StatusForbidden, "tidak berhak mengakses data user lain")
+		return helper.Forbidden("tidak berhak mengakses data user lain")
 	}
 
 	user, err := s.repo.FindByID(ctx, id)
 	if err != nil {
-		return terjemahkanUserError(c, err, "gagal mengambil data user")
+		return translateUserError(err, "user")
 	}
 
-	return helper.OK(c, "user ditemukan", s.safeUser(user))
+	return helper.Success(c, fiber.StatusOK, "user ditemukan", s.safeUser(user))
 }
 
 // ---------- POST /users ----------
@@ -106,35 +143,26 @@ func (s *UserService) Create(c *fiber.Ctx) error {
 	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
 
-	var req RegisterRequest
+	var req model.CreateUserRequest
 	if err := c.BodyParser(&req); err != nil {
-		return helper.Fail(c, fiber.StatusBadRequest, "format JSON tidak valid")
+		return helper.BadRequest("format JSON tidak valid")
 	}
 
-	req.Username = strings.TrimSpace(req.Username)
-	if req.Username == "" || req.Password == "" {
-		return helper.Fail(c, fiber.StatusBadRequest, "username dan password wajib diisi")
-	}
-
-	role := strings.TrimSpace(req.Role)
-	if role == "" {
-		role = "user"
-	}
-	if !s.perms.IsKnownRole(role) {
-		return helper.Fail(c, fiber.StatusBadRequest, "role tidak dikenal")
+	if errs := helper.ValidateStruct(req); errs != nil {
+		return helper.Validation(errs)
 	}
 
 	pwdHash, err := helper.HashPassword(req.Password)
 	if err != nil {
-		return helper.Fail(c, fiber.StatusInternalServerError, "gagal memproses password")
+		return helper.Internal(err)
 	}
 
-	newUser, err := s.repo.Create(ctx, req.Username, pwdHash, role)
+	newUser, err := s.repo.Create(ctx, req.Username, pwdHash, "user")
 	if err != nil {
-		return terjemahkanUserError(c, err, "gagal membuat user")
+		return translateUserError(err, "user")
 	}
 
-	return helper.Created(c, "user berhasil dibuat", s.safeUser(newUser), "/api/v1/users/"+string(rune(newUser.ID)))
+	return helper.Created(c, "user berhasil dibuat", s.safeUser(newUser), "/api/v1/users/"+strconv.Itoa(newUser.ID))
 }
 
 // ---------- PUT /users/:id ----------
@@ -144,36 +172,35 @@ func (s *UserService) Replace(c *fiber.Ctx) error {
 
 	current, ok := helper.CurrentUser(c)
 	if !ok {
-		return helper.Fail(c, fiber.StatusUnauthorized, "belum terautentikasi")
+		return helper.Unauthorized("belum terautentikasi")
 	}
 
 	id, valid := helper.ParamID(c)
 	if !valid {
-		return helper.Fail(c, fiber.StatusBadRequest, "id harus berupa angka positif")
+		return helper.BadRequest("id harus berupa angka positif")
 	}
 
 	if !CanAccessUser(current, id, s.perms, "user:update:any") {
-		return helper.Fail(c, fiber.StatusForbidden, "tidak berhak mengubah data user lain")
+		return helper.Forbidden("tidak berhak mengubah data user lain")
 	}
 
-	var req struct {
-		Username string `json:"username"`
-	}
+	var req model.ReplaceUserRequest
 	if err := c.BodyParser(&req); err != nil {
-		return helper.Fail(c, fiber.StatusBadRequest, "format JSON tidak valid")
+		return helper.BadRequest("format JSON tidak valid")
 	}
 
-	req.Username = strings.TrimSpace(req.Username)
-	if req.Username == "" {
-		return helper.FailValidation(c, map[string]string{"username": "wajib diisi"})
+	if errs := helper.ValidateStruct(req); errs != nil {
+		return helper.Validation(errs)
 	}
 
 	updated, err := s.repo.Update(ctx, model.User{
 		ID:       id,
 		Username: req.Username,
+		Email:    req.Email,
+		IsActive: req.IsActive,
 	})
 	if err != nil {
-		return terjemahkanUserError(c, err, "gagal memperbarui user")
+		return translateUserError(err, "user")
 	}
 
 	return helper.OK(c, "user berhasil diperbarui", s.safeUser(updated))
@@ -181,37 +208,81 @@ func (s *UserService) Replace(c *fiber.Ctx) error {
 
 // ---------- PATCH /users/:id ----------
 func (s *UserService) Patch(c *fiber.Ctx) error {
-	return s.Replace(c)
+	ctx, cancel := helper.RequestContext(c)
+	defer cancel()
+
+	current, ok := helper.CurrentUser(c)
+	if !ok {
+		return helper.Unauthorized("belum terautentikasi")
+	}
+
+	id, valid := helper.ParamID(c)
+	if !valid {
+		return helper.BadRequest("id harus berupa angka positif")
+	}
+
+	if !CanAccessUser(current, id, s.perms, "user:update:any") {
+		return helper.Forbidden("tidak berhak mengubah data user lain")
+	}
+
+	var req model.PatchUserRequest
+	if err := c.BodyParser(&req); err != nil {
+		return helper.BadRequest("format JSON tidak valid")
+	}
+
+	if IsEmptyUserPatch(req) {
+		return helper.BadRequest("tidak ada field yang diubah")
+	}
+
+	if errs := helper.ValidateStruct(req); errs != nil {
+		return helper.Validation(errs)
+	}
+
+	saatIni, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		return translateUserError(err, "user")
+	}
+
+	updatedUser := ApplyUserPatch(*saatIni, req)
+	updated, err := s.repo.Update(ctx, updatedUser)
+	if err != nil {
+		return translateUserError(err, "user")
+	}
+
+	return helper.OK(c, "user berhasil diperbarui sebagian", s.safeUser(updated))
 }
 
 // ---------- PATCH /users/:id/role ----------
-// Dijaga middleware dengan permission role:assign.
 func (s *UserService) AssignRole(c *fiber.Ctx) error {
 	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
 
 	current, ok := helper.CurrentUser(c)
 	if !ok {
-		return helper.Fail(c, fiber.StatusUnauthorized, "belum terautentikasi")
+		return helper.Unauthorized("belum terautentikasi")
 	}
 
 	id, valid := helper.ParamID(c)
 	if !valid {
-		return helper.Fail(c, fiber.StatusBadRequest, "id harus berupa angka positif")
+		return helper.BadRequest("id harus berupa angka positif")
 	}
 
 	var req model.AssignRoleRequest
 	if err := c.BodyParser(&req); err != nil {
-		return helper.Fail(c, fiber.StatusBadRequest, "body harus berupa JSON yang valid")
+		return helper.BadRequest("body harus berupa JSON yang valid")
+	}
+
+	if errs := helper.ValidateStruct(req); errs != nil {
+		return helper.Validation(errs)
 	}
 
 	if errs := ValidateAssignRole(current, id, req, s.perms); len(errs) > 0 {
-		return helper.FailValidation(c, errs)
+		return helper.Validation(errs)
 	}
 
 	result, err := s.repo.UpdateRole(ctx, id, strings.TrimSpace(req.Role))
 	if err != nil {
-		return terjemahkanUserError(c, err, "gagal mengubah role user")
+		return translateUserError(err, "user")
 	}
 
 	return helper.OK(c, "role user berhasil diubah", s.safeUser(result))
@@ -224,21 +295,21 @@ func (s *UserService) Delete(c *fiber.Ctx) error {
 
 	current, ok := helper.CurrentUser(c)
 	if !ok {
-		return helper.Fail(c, fiber.StatusUnauthorized, "belum terautentikasi")
+		return helper.Unauthorized("belum terautentikasi")
 	}
 
 	id, valid := helper.ParamID(c)
 	if !valid {
-		return helper.Fail(c, fiber.StatusBadRequest, "id harus berupa angka positif")
+		return helper.BadRequest("id harus berupa angka positif")
 	}
 
 	// Punya permission menghapus tidak berarti boleh menghapus dirinya sendiri.
 	if current.UserID == id {
-		return helper.Fail(c, fiber.StatusForbidden, "tidak boleh menghapus akun sendiri")
+		return helper.Forbidden("tidak boleh menghapus akun sendiri")
 	}
 
 	if err := s.repo.Delete(ctx, id); err != nil {
-		return terjemahkanUserError(c, err, "gagal menghapus user")
+		return translateUserError(err, "user")
 	}
 
 	return helper.NoContent(c)
