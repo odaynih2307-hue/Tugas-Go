@@ -74,8 +74,9 @@ func main() {
 
 	// 7. Setup Web Server Fiber & Middleware
 	app := fiber.New(fiber.Config{
-		AppName:   "API Students & Users - RBAC & Authorization (Modul 6)",
-		BodyLimit: 1 * 1024 * 1024,
+		AppName:      "API Students & Users - Advanced API Design (Modul 7)",
+		BodyLimit:    1 * 1024 * 1024,
+		ErrorHandler: config.NewErrorHandler(logger),
 	})
 	app.Use(requestid.New())
 	app.Use(middleware.RequestLogger(logger))
@@ -93,6 +94,11 @@ func main() {
 		UserService:    userService,
 		AuthService:    authService,
 		StudentService: studentService,
+	})
+
+	// 9. Penangan Route yang Tidak Dikenal (404 Not Found Terpusat)
+	app.Use(func(c *fiber.Ctx) error {
+		return helper.NotFound("endpoint tidak ditemukan")
 	})
 
 	port := config.GetEnv("APP_PORT", "3000")
