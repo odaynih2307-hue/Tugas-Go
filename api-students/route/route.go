@@ -6,6 +6,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 
 	"api-students/app/service"
 	"api-students/helper"
@@ -14,6 +15,7 @@ import (
 
 type Dependencies struct {
 	Pool              *pgxpool.Pool
+	Mongo             *mongo.Client
 	JWT               *helper.JWTManager
 	Permissions       *helper.PermissionSet
 	UserService       *service.UserService
@@ -21,18 +23,25 @@ type Dependencies struct {
 	StudentService    *service.StudentService
 	CourseService     *service.CourseService
 	SupervisorService *service.SupervisorService
+	ReviewService     *service.ReviewService
+	PortfolioService  *service.PortfolioService
 }
 
-func healthCheck(pool *pgxpool.Pool) fiber.Handler {
+func healthCheck(pool *pgxpool.Pool, mongoClient *mongo.Client) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		ctx, cancel := context.WithTimeout(c.UserContext(), 2*time.Second)
 		defer cancel()
 
 		if err := pool.Ping(ctx); err != nil {
-			return helper.ServiceUnavailable("database tidak dapat dihubungi")
+			return helper.ServiceUnavailable("PostgreSQL tidak dapat dihubungi")
+		}
+		if mongoClient != nil {
+			if err := mongoClient.Ping(ctx, nil); err != nil {
+				return helper.ServiceUnavailable("MongoDB tidak dapat dihubungi")
+			}
 		}
 
-		return helper.OK(c, "server dan database berjalan", nil)
+		return helper.OK(c, "server, PostgreSQL, dan MongoDB berjalan", nil)
 	}
 }
 
@@ -40,7 +49,7 @@ func Register(app *fiber.App, deps Dependencies) {
 	api := app.Group("/api/v1")
 
 	// --- Publik ---
-	api.Get("/health", healthCheck(deps.Pool))
+	api.Get("/health", healthCheck(deps.Pool, deps.Mongo))
 
 	// --- Autentikasi ---
 	auth := api.Group("/auth", middleware.RequireJSON)
@@ -106,7 +115,21 @@ func Register(app *fiber.App, deps Dependencies) {
 	students.Put("/:id", deps.StudentService.Replace)
 	students.Patch("/:id", deps.StudentService.Patch)
 
-	// --- Courses & KRS (Modul 9) ---
+	// --- Portofolio Mahasiswa (Modul 10 Tugas Mandiri) ---
+	if deps.PortfolioService != nil {
+		students.Get("/:id/portfolio", deps.PortfolioService.Get)
+		students.Put("/:id/portfolio", deps.PortfolioService.Upsert)
+		students.Post("/:id/portfolio/projects", deps.PortfolioService.AddProject)
+		students.Delete("/:id/portfolio/projects/:projectId", deps.PortfolioService.DeleteProject)
+
+		portfolios := api.Group("/portfolios",
+			middleware.RequireJSON,
+			middleware.RequireAuth(deps.JWT),
+		)
+		portfolios.Get("/stats/technologies", deps.PortfolioService.GetStats)
+	}
+
+	// --- Courses & KRS (Modul 9 & 10) ---
 	if deps.CourseService != nil {
 		courses := api.Group("/courses",
 			middleware.RequireJSON,
@@ -119,11 +142,31 @@ func Register(app *fiber.App, deps Dependencies) {
 		courses.Delete("/:id/enroll", deps.CourseService.Drop)
 		courses.Patch("/:id", middleware.RequirePermission(perms, "course:manage"), deps.CourseService.UpdateQuota)
 
+		// Ulasan Kelas di dalam Courses (Modul 10)
+		if deps.ReviewService != nil {
+			courses.Get("/:id/reviews", deps.ReviewService.ListByCourse)
+			courses.Get("/:id/reviews/summary", deps.ReviewService.Summary)
+			courses.Post("/:id/reviews", deps.ReviewService.Create)
+		}
+
 		enrollments := api.Group("/enrollments",
 			middleware.RequireJSON,
 			middleware.RequireAuth(deps.JWT),
 		)
 		enrollments.Post("/swap", deps.CourseService.Swap)
+	}
+
+	// --- Ulasan Kelas MongoDB (Modul 10) ---
+	if deps.ReviewService != nil {
+		reviews := api.Group("/reviews",
+			middleware.RequireJSON,
+			middleware.RequireAuth(deps.JWT),
+		)
+		reviews.Get("/:id", deps.ReviewService.Get)
+		reviews.Patch("/:id", deps.ReviewService.Update)
+		reviews.Delete("/:id", deps.ReviewService.Delete)
+		reviews.Post("/:id/replies", deps.ReviewService.Reply)
+		reviews.Post("/:id/helpful", deps.ReviewService.MarkHelpful)
 	}
 
 	// --- Supervisors & Supervisions (Modul 9 Tugas Mandiri D.2) ---
