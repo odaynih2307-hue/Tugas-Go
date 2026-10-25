@@ -34,11 +34,14 @@ func main() {
 	}
 	defer pool.Close()
 
-	// 3. Inisialisasi Repository
+	// 3. Inisialisasi Repository & Transaction Manager
+	txManager := repository.NewTxManager(pool)
 	studentRepository := repository.NewStudentRepository(pool)
 	userRepository := repository.NewUserRepository(pool)
 	tokenRepository := repository.NewTokenRepository(pool)
 	roleRepository := repository.NewRoleRepository(pool)
+	courseRepository := repository.NewCourseRepository(pool)
+	supervisorRepository := repository.NewSupervisorRepository(pool)
 
 	// 4. Memuat Pemetaan Hak Akses (PermissionSet) Sekali Saat Aplikasi Menyala (Fail-Closed)
 	rawPermissions, err := roleRepository.LoadPermissions(context.Background())
@@ -71,10 +74,12 @@ func main() {
 		permissions,
 		time.Duration(config.GetEnvInt("JWT_REFRESH_TTL_DAYS", 7))*24*time.Hour,
 	)
+	courseService := service.NewCourseService(courseRepository, txManager)
+	supervisorService := service.NewSupervisorService(supervisorRepository, studentRepository, txManager)
 
 	// 7. Setup Web Server Fiber & Middleware
 	app := fiber.New(fiber.Config{
-		AppName:      "API Students & Users - Advanced API Design (Modul 7)",
+		AppName:      "API Students, Courses, & Transactions (Modul 9)",
 		BodyLimit:    1 * 1024 * 1024,
 		ErrorHandler: config.NewErrorHandler(logger),
 	})
@@ -88,12 +93,14 @@ func main() {
 
 	// 8. Registrasi Routing Terpusat (Access Control Map)
 	route.Register(app, route.Dependencies{
-		Pool:           pool,
-		JWT:            jwtManager,
-		Permissions:    permissions,
-		UserService:    userService,
-		AuthService:    authService,
-		StudentService: studentService,
+		Pool:              pool,
+		JWT:               jwtManager,
+		Permissions:       permissions,
+		UserService:       userService,
+		AuthService:       authService,
+		StudentService:    studentService,
+		CourseService:     courseService,
+		SupervisorService: supervisorService,
 	})
 
 	// 9. Penangan Route yang Tidak Dikenal (404 Not Found Terpusat)
