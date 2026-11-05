@@ -11,21 +11,24 @@ import (
 	"api-students/app/service"
 	"api-students/helper"
 	"api-students/middleware"
+
+	"github.com/gofiber/swagger"
 )
 
 type Dependencies struct {
-	Pool              *pgxpool.Pool
-	Mongo             *mongo.Client
-	JWT               *helper.JWTManager
-	Permissions       *helper.PermissionSet
-	UserService       *service.UserService
-	AuthService       *service.AuthService
-	StudentService    *service.StudentService
-	CourseService     *service.CourseService
-	SupervisorService *service.SupervisorService
-	ReviewService     *service.ReviewService
-	PortfolioService  *service.PortfolioService
+	Pool                *pgxpool.Pool
+	Mongo               *mongo.Client
+	JWT                 *helper.JWTManager
+	Permissions         *helper.PermissionSet
+	UserService         *service.UserService
+	AuthService         *service.AuthService
+	StudentService      *service.StudentService
+	CourseService       *service.CourseService
+	SupervisorService   *service.SupervisorService
+	ReviewService       *service.ReviewService
+	PortfolioService    *service.PortfolioService
 	NotificationService *service.NotificationService
+	EnableSwagger       bool
 }
 
 func healthCheck(pool *pgxpool.Pool, mongoClient *mongo.Client) fiber.Handler {
@@ -47,6 +50,11 @@ func healthCheck(pool *pgxpool.Pool, mongoClient *mongo.Client) fiber.Handler {
 }
 
 func Register(app *fiber.App, deps Dependencies) {
+	if deps.EnableSwagger {
+		// Swagger UI: http://localhost:3000/swagger/index.html
+		app.Get("/swagger/*", swagger.HandlerDefault)
+	}
+
 	api := app.Group("/api/v1")
 
 	// --- Publik ---

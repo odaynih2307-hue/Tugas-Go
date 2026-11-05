@@ -60,6 +60,19 @@ func NewAuthService(
 
 // Register membuat akun baru menggunakan validasi deklaratif (Langkah 6).
 // Role selalu ditentukan server agar user tidak bisa mendaftarkan dirinya sebagai admin.
+// Register godoc
+//
+// @Summary Mendaftarkan akun baru
+// @Description Role akun baru selalu "user". Password minimal 8 karakter dan memuat huruf serta angka.
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param body body model.RegisterRequest true "Data akun baru"
+// @Success 201 {object} model.WebResponse{data=model.User}
+// @Failure 400 {object} model.ErrorResponse "Body bukan JSON yang valid"
+// @Failure 409 {object} model.ErrorResponse "Username sudah dipakai"
+// @Failure 422 {object} model.ErrorResponse "Validasi gagal; detail per field ada di fields"
+// @Router /auth/register [post]
 func (s *AuthService) Register(c *fiber.Ctx) error {
 	var req model.RegisterRequest
 
@@ -103,6 +116,18 @@ func (s *AuthService) Register(c *fiber.Ctx) error {
 }
 
 // Login menghasilkan access token dan refresh token.
+// Login godoc
+//
+// @Summary Login dan mendapatkan pasangan token
+// @Description Dibatasi 5 kali gagal per menit per IP.
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param body body model.LoginRequest true "Username dan password"
+// @Success 200 {object} model.WebResponse{data=model.TokenPair}
+// @Failure 401 {object} model.ErrorResponse "Username atau password salah"
+// @Failure 429 {object} model.ErrorResponse "Terlalu banyak percobaan login"
+// @Router /auth/login [post]
 func (s *AuthService) Login(c *fiber.Ctx) error {
 	var req LoginRequest
 
@@ -176,6 +201,17 @@ func (s *AuthService) Login(c *fiber.Ctx) error {
 }
 
 // Refresh melakukan rotation refresh token.
+// Refresh godoc
+//
+// @Summary Menukar refresh token dengan pasangan token baru
+// @Description Refresh token lama langsung dicabut (rotation).
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param body body model.RefreshRequest true "Refresh token"
+// @Success 200 {object} model.WebResponse{data=model.TokenPair}
+// @Failure 401 {object} model.ErrorResponse "Refresh token tidak valid, kedaluwarsa, atau sudah dicabut"
+// @Router /auth/refresh [post]
 func (s *AuthService) Refresh(c *fiber.Ctx) error {
 	var req struct {
 		RefreshToken string `json:"refresh_token"`
@@ -260,6 +296,18 @@ func (s *AuthService) Refresh(c *fiber.Ctx) error {
 }
 
 // Logout mencabut refresh token yang sedang digunakan.
+// Logout godoc
+//
+// @Summary Mencabut refresh token pengguna (logout)
+// @Description Refresh token yang dikirim akan dicabut secara permanen.
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param body body model.RefreshRequest true "Refresh token yang akan dicabut"
+// @Success 200 {object} model.WebResponse "Berhasil logout"
+// @Failure 400 {object} model.ErrorResponse "Body bukan JSON yang valid"
+// @Failure 401 {object} model.ErrorResponse "Refresh token tidak valid atau sudah dicabut"
+// @Router /auth/logout [post]
 func (s *AuthService) Logout(c *fiber.Ctx) error {
 	var req struct {
 		RefreshToken string `json:"refresh_token"`
@@ -304,6 +352,16 @@ func (s *AuthService) Logout(c *fiber.Ctx) error {
 }
 
 // Me mengambil identitas user dari middleware authentication.
+// Me godoc
+//
+// @Summary Mendapatkan profil pengguna yang sedang login
+// @Description Memerlukan access token yang valid.
+// @Tags auth
+// @Produce json
+// @Success 200 {object} model.WebResponse{data=model.User}
+// @Failure 401 {object} model.ErrorResponse "Belum login atau token tidak valid"
+// @Security BearerAuth
+// @Router /auth/me [get]
 func (s *AuthService) Me(c *fiber.Ctx) error {
 	userID, ok := c.Locals(LocalsUserID).(int)
 	if !ok {

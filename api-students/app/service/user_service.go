@@ -62,6 +62,17 @@ func (s *UserService) safeUser(user *model.User) *model.User {
 }
 
 // ---------- GET /users (Cursor Pagination & Content Negotiation) ----------
+// List godoc
+//
+// @Summary Daftar pengguna (admin/user:read:any)
+// @Tags users
+// @Produce json
+// @Param limit query int false "Limit per halaman" default(10)
+// @Param cursor query string false "Cursor pagination"
+// @Success 200 {object} model.WebResponse{data=[]model.User}
+// @Failure 403 {object} model.ErrorResponse
+// @Security BearerAuth
+// @Router /users [get]
 func (s *UserService) List(c *fiber.Ctx) error {
 	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
@@ -110,6 +121,17 @@ func (s *UserService) List(c *fiber.Ctx) error {
 }
 
 // ---------- GET /users/:id ----------
+// Get godoc
+//
+// @Summary Detail pengguna berdasarkan ID
+// @Tags users
+// @Produce json
+// @Param id path int true "ID Pengguna"
+// @Success 200 {object} model.WebResponse{data=model.User}
+// @Failure 403 {object} model.ErrorResponse
+// @Failure 404 {object} model.ErrorResponse
+// @Security BearerAuth
+// @Router /users/{id} [get]
 func (s *UserService) Get(c *fiber.Ctx) error {
 	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
@@ -139,6 +161,18 @@ func (s *UserService) Get(c *fiber.Ctx) error {
 }
 
 // ---------- POST /users ----------
+// Create godoc
+//
+// @Summary Membuat pengguna baru (admin)
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param body body model.CreateUserRequest true "Data user baru"
+// @Success 201 {object} model.WebResponse{data=model.User}
+// @Failure 403 {object} model.ErrorResponse
+// @Failure 409 {object} model.ErrorResponse "Username sudah ada"
+// @Security BearerAuth
+// @Router /users [post]
 func (s *UserService) Create(c *fiber.Ctx) error {
 	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
@@ -166,6 +200,19 @@ func (s *UserService) Create(c *fiber.Ctx) error {
 }
 
 // ---------- PUT /users/:id ----------
+// Replace godoc
+//
+// @Summary Memperbarui seluruh data pengguna (PUT)
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param id path int true "ID Pengguna"
+// @Param body body model.CreateUserRequest true "Data user baru"
+// @Success 200 {object} model.WebResponse{data=model.User}
+// @Failure 403 {object} model.ErrorResponse
+// @Failure 404 {object} model.ErrorResponse
+// @Security BearerAuth
+// @Router /users/{id} [put]
 func (s *UserService) Replace(c *fiber.Ctx) error {
 	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
@@ -207,6 +254,19 @@ func (s *UserService) Replace(c *fiber.Ctx) error {
 }
 
 // ---------- PATCH /users/:id ----------
+// Patch godoc
+//
+// @Summary Memperbarui sebagian data pengguna (PATCH)
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param id path int true "ID Pengguna"
+// @Param body body model.PatchUserRequest true "Data patch user"
+// @Success 200 {object} model.WebResponse{data=model.User}
+// @Failure 403 {object} model.ErrorResponse
+// @Failure 404 {object} model.ErrorResponse
+// @Security BearerAuth
+// @Router /users/{id} [patch]
 func (s *UserService) Patch(c *fiber.Ctx) error {
 	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
@@ -253,6 +313,19 @@ func (s *UserService) Patch(c *fiber.Ctx) error {
 }
 
 // ---------- PATCH /users/:id/role ----------
+// AssignRole godoc
+//
+// @Summary Mengubah role pengguna (admin)
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param id path int true "ID Pengguna"
+// @Param body body model.AssignRoleRequest true "Role baru"
+// @Success 200 {object} model.WebResponse{data=model.User}
+// @Failure 403 {object} model.ErrorResponse
+// @Failure 404 {object} model.ErrorResponse
+// @Security BearerAuth
+// @Router /users/{id}/role [patch]
 func (s *UserService) AssignRole(c *fiber.Ctx) error {
 	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
@@ -289,6 +362,16 @@ func (s *UserService) AssignRole(c *fiber.Ctx) error {
 }
 
 // ---------- DELETE /users/:id ----------
+// Delete godoc
+//
+// @Summary Menghapus pengguna (admin)
+// @Tags users
+// @Param id path int true "ID Pengguna"
+// @Success 200 {object} model.WebResponse "Pengguna berhasil dihapus"
+// @Failure 403 {object} model.ErrorResponse
+// @Failure 404 {object} model.ErrorResponse
+// @Security BearerAuth
+// @Router /users/{id} [delete]
 func (s *UserService) Delete(c *fiber.Ctx) error {
 	ctx, cancel := helper.RequestContext(c)
 	defer cancel()
