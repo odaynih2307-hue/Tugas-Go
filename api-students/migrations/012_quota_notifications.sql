@@ -11,4 +11,11 @@
 
 ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_outbox_unique;
 
-ALTER TABLE notifications ADD CONSTRAINT notifications_outbox_user_unique UNIQUE (outbox_id, user_id);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'notifications_outbox_user_unique'
+    ) THEN
+        ALTER TABLE notifications ADD CONSTRAINT notifications_outbox_user_unique UNIQUE (outbox_id, user_id);
+    END IF;
+END $$;

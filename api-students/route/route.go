@@ -131,17 +131,19 @@ func Register(app *fiber.App, deps Dependencies) {
 	}
 
 	// --- Courses & KRS (Modul 9 & 10) ---
-	if deps.CourseService != nil {
+	if deps.CourseService != nil || deps.ReviewService != nil {
 		courses := api.Group("/courses",
 			middleware.RequireJSON,
 			middleware.RequireAuth(deps.JWT),
 		)
-		courses.Get("/", deps.CourseService.List)
-		courses.Get("/mine", deps.CourseService.Mine)
-		courses.Get("/:id", deps.CourseService.Get)
-		courses.Post("/:id/enroll", deps.CourseService.Enroll)
-		courses.Delete("/:id/enroll", deps.CourseService.Drop)
-		courses.Patch("/:id", middleware.RequirePermission(perms, "course:manage"), deps.CourseService.UpdateQuota)
+		if deps.CourseService != nil {
+			courses.Get("/", deps.CourseService.List)
+			courses.Get("/mine", deps.CourseService.Mine)
+			courses.Get("/:id", deps.CourseService.Get)
+			courses.Post("/:id/enroll", deps.CourseService.Enroll)
+			courses.Delete("/:id/enroll", deps.CourseService.Drop)
+			courses.Patch("/:id", middleware.RequirePermission(perms, "course:manage"), deps.CourseService.UpdateQuota)
+		}
 
 		// Ulasan Kelas di dalam Courses (Modul 10)
 		if deps.ReviewService != nil {
@@ -150,11 +152,13 @@ func Register(app *fiber.App, deps Dependencies) {
 			courses.Post("/:id/reviews", deps.ReviewService.Create)
 		}
 
-		enrollments := api.Group("/enrollments",
-			middleware.RequireJSON,
-			middleware.RequireAuth(deps.JWT),
-		)
-		enrollments.Post("/swap", deps.CourseService.Swap)
+		if deps.CourseService != nil {
+			enrollments := api.Group("/enrollments",
+				middleware.RequireJSON,
+				middleware.RequireAuth(deps.JWT),
+			)
+			enrollments.Post("/swap", deps.CourseService.Swap)
+		}
 	}
 
 	// --- Ulasan Kelas MongoDB (Modul 10) ---
