@@ -28,3 +28,5 @@ logs/
 # Test artifacts
 scratch/
 
+
+__pycache__/
