@@ -157,7 +157,7 @@ func (s *UserService) Create(c *fiber.Ctx) error {
 		return helper.Internal(err)
 	}
 
-	newUser, err := s.repo.Create(ctx, req.Username, pwdHash, "user")
+	newUser, err := s.repo.Create(ctx, req.Username, req.Email, pwdHash, "user")
 	if err != nil {
 		return translateUserError(err, "user")
 	}

@@ -18,7 +18,7 @@ var (
 )
 
 type UserRepository interface {
-	Create(ctx context.Context, username, passwordHash, role string) (*model.User, error)
+	Create(ctx context.Context, username, email, passwordHash, role string) (*model.User, error)
 	FindByUsername(ctx context.Context, username string) (*model.User, error)
 	FindByID(ctx context.Context, id int) (model.User, error)
 	FindAfterCursor(ctx context.Context, q model.CursorQuery) ([]model.User, error)
@@ -41,11 +41,14 @@ func NewUserRepository(pool *pgxpool.Pool) UserRepository {
 func (r *userPostgresRepository) Create(
 	ctx context.Context,
 	username string,
+	email string,
 	passwordHash string,
 	role string,
 ) (*model.User, error) {
 	var user model.User
-	email := username + "@unair.ac.id"
+	if email == "" {
+		email = username + "@unair.ac.id"
+	}
 
 	err := r.pool.QueryRow(
 		ctx,

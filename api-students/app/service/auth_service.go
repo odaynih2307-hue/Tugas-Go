@@ -82,6 +82,7 @@ func (s *AuthService) Register(c *fiber.Ctx) error {
 	user, err := s.userRepository.Create(
 		c.Context(),
 		req.Username,
+		req.Email,
 		passwordHash,
 		role,
 	)
