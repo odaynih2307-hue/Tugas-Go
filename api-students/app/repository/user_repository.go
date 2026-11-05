@@ -17,17 +17,28 @@ var (
 	ErrUserExists   = ErrDuplicate
 )
 
-type UserRepository struct {
+type UserRepository interface {
+	Create(ctx context.Context, username, passwordHash, role string) (*model.User, error)
+	FindByUsername(ctx context.Context, username string) (*model.User, error)
+	FindByID(ctx context.Context, id int) (model.User, error)
+	FindAfterCursor(ctx context.Context, q model.CursorQuery) ([]model.User, error)
+	FindAll(ctx context.Context, q model.ListQuery) ([]model.User, int, error)
+	Update(ctx context.Context, u model.User) (*model.User, error)
+	UpdateRole(ctx context.Context, id int, role string) (*model.User, error)
+	Delete(ctx context.Context, id int) error
+}
+
+type userPostgresRepository struct {
 	pool *pgxpool.Pool
 }
 
-func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
-	return &UserRepository{
+func NewUserRepository(pool *pgxpool.Pool) UserRepository {
+	return &userPostgresRepository{
 		pool: pool,
 	}
 }
 
-func (r *UserRepository) Create(
+func (r *userPostgresRepository) Create(
 	ctx context.Context,
 	username string,
 	passwordHash string,
@@ -68,7 +79,7 @@ func (r *UserRepository) Create(
 	return &user, nil
 }
 
-func (r *UserRepository) FindByUsername(
+func (r *userPostgresRepository) FindByUsername(
 	ctx context.Context,
 	username string,
 ) (*model.User, error) {
@@ -103,10 +114,10 @@ func (r *UserRepository) FindByUsername(
 	return &user, nil
 }
 
-func (r *UserRepository) FindByID(
+func (r *userPostgresRepository) FindByID(
 	ctx context.Context,
 	id int,
-) (*model.User, error) {
+) (model.User, error) {
 	var user model.User
 
 	err := r.pool.QueryRow(
@@ -129,13 +140,13 @@ func (r *UserRepository) FindByID(
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrUserNotFound
+			return model.User{}, ErrNotFound
 		}
 
-		return nil, fmt.Errorf("gagal mencari user: %w", err)
+		return model.User{}, fmt.Errorf("gagal mencari user: %w", err)
 	}
 
-	return &user, nil
+	return user, nil
 }
 
 // FindAfterCursor mengambil satu halaman memakai keyset pagination (Langkah 7).
@@ -153,7 +164,7 @@ func (r *UserRepository) FindByID(
 // Hal tersebut menyebabkan urutan terbalik dari yang disyaratkan (data terbaru harus di awal)
 // dan kondisi keyset (created_at, id) < ($1, $2) tidak bekerja secara benar.
 // Kami memperbaikinya menjadi: `ORDER BY created_at DESC, id DESC`.
-func (r *UserRepository) FindAfterCursor(
+func (r *userPostgresRepository) FindAfterCursor(
 	ctx context.Context, q model.CursorQuery,
 ) ([]model.User, error) {
 	args := []any{}
@@ -202,7 +213,7 @@ func (r *UserRepository) FindAfterCursor(
 	return result, nil
 }
 
-func (r *UserRepository) FindAll(ctx context.Context, q model.ListQuery) ([]model.User, int, error) {
+func (r *userPostgresRepository) FindAll(ctx context.Context, q model.ListQuery) ([]model.User, int, error) {
 	where := " WHERE 1 = 1"
 	args := []any{}
 
@@ -258,7 +269,7 @@ func (r *UserRepository) FindAll(ctx context.Context, q model.ListQuery) ([]mode
 	return users, total, nil
 }
 
-func (r *UserRepository) Update(
+func (r *userPostgresRepository) Update(
 	ctx context.Context,
 	u model.User,
 ) (*model.User, error) {
@@ -286,7 +297,7 @@ func (r *UserRepository) Update(
 
 // UpdateRole sengaja dipisah dari Update. Mengubah role adalah tindakan
 // istimewa yang dijaga permission tersendiri.
-func (r *UserRepository) UpdateRole(
+func (r *userPostgresRepository) UpdateRole(
 	ctx context.Context,
 	id int,
 	role string,
@@ -310,7 +321,7 @@ func (r *UserRepository) UpdateRole(
 	return &user, nil
 }
 
-func (r *UserRepository) Delete(ctx context.Context, id int) error {
+func (r *userPostgresRepository) Delete(ctx context.Context, id int) error {
 	tag, err := r.pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("menghapus user: %w", err)

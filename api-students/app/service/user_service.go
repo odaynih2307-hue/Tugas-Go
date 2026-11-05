@@ -13,12 +13,12 @@ import (
 )
 
 type UserService struct {
-	repo  *repository.UserRepository
+	repo  repository.UserRepository
 	perms *helper.PermissionSet
 }
 
 func NewUserService(
-	repo *repository.UserRepository,
+	repo repository.UserRepository,
 	perms *helper.PermissionSet,
 ) *UserService {
 	return &UserService{repo: repo, perms: perms}
@@ -135,7 +135,7 @@ func (s *UserService) Get(c *fiber.Ctx) error {
 		return translateUserError(err, "user")
 	}
 
-	return helper.Success(c, fiber.StatusOK, "user ditemukan", s.safeUser(user))
+	return helper.Success(c, fiber.StatusOK, "user ditemukan", s.safeUser(&user))
 }
 
 // ---------- POST /users ----------
@@ -243,7 +243,7 @@ func (s *UserService) Patch(c *fiber.Ctx) error {
 		return translateUserError(err, "user")
 	}
 
-	updatedUser := ApplyUserPatch(*saatIni, req)
+	updatedUser := ApplyUserPatch(saatIni, req)
 	updated, err := s.repo.Update(ctx, updatedUser)
 	if err != nil {
 		return translateUserError(err, "user")

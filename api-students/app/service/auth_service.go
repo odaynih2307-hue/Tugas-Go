@@ -35,7 +35,7 @@ type TokenResponse struct {
 }
 
 type AuthService struct {
-	userRepository  *repository.UserRepository
+	userRepository  repository.UserRepository
 	tokenRepository *repository.TokenRepository
 	jwtManager      *helper.JWTManager
 	perms           *helper.PermissionSet
@@ -43,7 +43,7 @@ type AuthService struct {
 }
 
 func NewAuthService(
-	userRepository *repository.UserRepository,
+	userRepository repository.UserRepository,
 	tokenRepository *repository.TokenRepository,
 	jwtManager *helper.JWTManager,
 	perms *helper.PermissionSet,
@@ -253,7 +253,7 @@ func (s *AuthService) Refresh(c *fiber.Ctx) error {
 			RefreshToken: newRefreshToken,
 			TokenType:    "Bearer",
 			ExpiresIn:    expiresIn,
-			User:         s.safeUser(user),
+			User:         s.safeUser(&user),
 		},
 	)
 }
@@ -330,7 +330,7 @@ func (s *AuthService) Me(c *fiber.Ctx) error {
 		c,
 		"profil user berhasil diambil",
 		fiber.Map{
-			"user":        s.safeUser(user),
+			"user":        s.safeUser(&user),
 			"permissions": permissions,
 		},
 	)
