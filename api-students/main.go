@@ -2,86 +2,135 @@ package main
 
 import (
 	"context"
-	"log"
+	"flag"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/requestid"
+	"github.com/hibiken/asynq"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"api-students/app/repository"
 	"api-students/app/service"
 	"api-students/config"
 	"api-students/database"
 	"api-students/helper"
-	"api-students/middleware"
 	"api-students/route"
 )
 
+const minSecretLength = 32
+
 func main() {
-	// 1. Inisialisasi Logger & Konfigurasi Environment
+	config.LoadEnv()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
-	config.LoadEnv()
 
-	// 2. Koneksi Basis Data PostgreSQL
+	// Satu program, tiga cara menjalankan:
+	// go run . -role=api      hanya melayani HTTP
+	// go run . -role=worker   hanya relay outbox dan worker queue
+	// go run . -role=all      keduanya dalam satu proses
+	// Di production, api dan worker dijalankan sebagai proses terpisah agar
+	// masing-masing dapat diperbanyak sesuai bebannya.
+	role := flag.String("role", config.GetEnv("APP_ROLE", "all"), "api | worker | all")
+	flag.Parse()
+
+	runAPI := *role == "api" || *role == "all"
+	runWorker := *role == "worker" || *role == "all"
+
+	if !runAPI && !runWorker {
+		logger.Error("role tidak dikenal", slog.String("role", *role))
+		os.Exit(1)
+	}
+
 	pool, err := database.NewPool(context.Background())
 	if err != nil {
-		logger.Error("gagal terhubung ke PostgreSQL", slog.String("error", err.Error()))
+		logger.Error("gagal terhubung ke database", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
 	defer pool.Close()
 
-	// 3. Koneksi Basis Data NoSQL MongoDB (Modul 10)
+	// ctx dibatalkan ketika Ctrl+C ditekan atau sistem mengirim SIGTERM.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var app *fiber.App
+	if runAPI {
+		app = startAPI(logger, pool)
+		if app == nil {
+			os.Exit(1)
+		}
+	}
+
+	var stopWorker func()
+	if runWorker {
+		stopWorker = startWorker(ctx, logger, pool)
+		if stopWorker == nil {
+			os.Exit(1)
+		}
+	}
+
+	logger.Info("aplikasi berjalan", slog.String("role", *role))
+	<-ctx.Done()
+
+	// Urutan berhenti: pintu masuk ditutup lebih dulu (HTTP), baru kemudian
+	// pekerja di belakangnya.
+	if app != nil {
+		if err := app.ShutdownWithTimeout(10 * time.Second); err != nil {
+			logger.Error("shutdown HTTP tidak rapi", slog.String("error", err.Error()))
+		}
+	}
+	if stopWorker != nil {
+		stopWorker()
+	}
+	logger.Info("aplikasi berhenti dengan rapi")
+}
+
+// startAPI menyiapkan seluruh kebutuhan HTTP. Mengembalikan nil bila gagal.
+func startAPI(logger *slog.Logger, pool *pgxpool.Pool) *fiber.App {
+	jwtSecret := config.GetEnv("JWT_SECRET", "")
+	if len(jwtSecret) < minSecretLength {
+		logger.Error("JWT_SECRET tidak diisi atau terlalu pendek",
+			slog.Int("minimal_karakter", minSecretLength))
+		return nil
+	}
+
 	mongoClient, err := database.NewMongoClient(context.Background())
 	if err != nil {
 		logger.Error("gagal terhubung ke MongoDB", slog.String("error", err.Error()))
-		os.Exit(1)
+		return nil
 	}
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = mongoClient.Disconnect(ctx)
-	}()
 	mongoDB := mongoClient.Database(config.GetEnv("MONGO_DATABASE", "praktikum_backend"))
 
-	// 4. Inisialisasi Repository & Transaction Manager
-	txManager := repository.NewTxManager(pool)
-	studentRepository := repository.NewStudentRepository(pool)
 	userRepository := repository.NewUserRepository(pool)
+	studentRepository := repository.NewStudentRepository(pool)
 	tokenRepository := repository.NewTokenRepository(pool)
 	roleRepository := repository.NewRoleRepository(pool)
 	courseRepository := repository.NewCourseRepository(pool)
 	supervisorRepository := repository.NewSupervisorRepository(pool)
-
+	outboxRepository := repository.NewOutboxRepository(pool)
+	notificationRepository := repository.NewNotificationRepository(pool)
+	txManager := repository.NewTxManager(pool)
 	reviewRepository := repository.NewReviewRepository(mongoDB)
-	if err := reviewRepository.EnsureIndexes(context.Background()); err != nil {
-		logger.Error("gagal membuat index course_reviews MongoDB", slog.String("error", err.Error()))
-		os.Exit(1)
-	}
-
 	portfolioRepository := repository.NewPortfolioRepository(mongoDB)
+
+	if err := reviewRepository.EnsureIndexes(context.Background()); err != nil {
+		logger.Error("gagal membuat index MongoDB", slog.String("error", err.Error()))
+		return nil
+	}
 	if err := portfolioRepository.EnsureIndexes(context.Background()); err != nil {
-		logger.Error("gagal membuat index student_portfolios MongoDB", slog.String("error", err.Error()))
-		os.Exit(1)
+		logger.Error("gagal membuat index MongoDB portfolio", slog.String("error", err.Error()))
+		return nil
 	}
 
-	// 5. Memuat Pemetaan Hak Akses (PermissionSet) Sekali Saat Aplikasi Menyala (Fail-Closed)
 	rawPermissions, err := roleRepository.LoadPermissions(context.Background())
 	if err != nil {
 		logger.Error("gagal memuat permission", slog.String("error", err.Error()))
-		os.Exit(1)
+		return nil
 	}
 	permissions := helper.NewPermissionSet(rawPermissions)
-	logger.Info("permission dimuat", slog.Any("roles", permissions.KnownRoles()))
-
-	// 6. Inisialisasi JWT Manager
-	jwtSecret := config.GetEnv("JWT_SECRET", "")
-	if len(jwtSecret) < 32 {
-		log.Fatal("JWT_SECRET tidak diisi atau terlalu pendek")
-	}
 
 	jwtManager := helper.NewJWTManager(
 		jwtSecret,
@@ -89,56 +138,42 @@ func main() {
 		time.Duration(config.GetEnvInt("JWT_ACCESS_TTL_MINUTES", 15))*time.Minute,
 	)
 
-	// 7. Inisialisasi Service Layer
-	userService := service.NewUserService(userRepository, permissions)
-	studentService := service.NewStudentService(studentRepository, permissions)
-	authService := service.NewAuthService(
-		userRepository,
-		tokenRepository,
-		jwtManager,
-		permissions,
-		time.Duration(config.GetEnvInt("JWT_REFRESH_TTL_DAYS", 7))*24*time.Hour,
-	)
-	courseService := service.NewCourseService(courseRepository, txManager)
-	supervisorService := service.NewSupervisorService(supervisorRepository, studentRepository, txManager)
-	reviewService := service.NewReviewService(reviewRepository, courseRepository, permissions)
-	portfolioService := service.NewPortfolioService(portfolioRepository, studentRepository)
+	// Inspector hanya MEMBACA keadaan queue untuk endpoint admin. Ia tidak
+	// menghubungi Redis saat dibuat, sehingga API tetap dapat menyala
+	// walaupun Redis sedang mati.
+	inspector := asynq.NewInspector(config.RedisOpt())
 
-	// 8. Setup Web Server Fiber & Middleware
-	app := fiber.New(fiber.Config{
-		AppName:      "API Students, Courses, & MongoDB Reviews/Portfolios (Modul 9 & 10)",
-		BodyLimit:    1 * 1024 * 1024,
-		ErrorHandler: config.NewErrorHandler(logger),
-	})
-	app.Use(requestid.New())
-	app.Use(middleware.RequestLogger(logger))
-	app.Use(cors.New(cors.Config{
-		AllowOrigins: "http://localhost:5173",
-		AllowMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-		AllowHeaders: "Origin,Content-Type,Accept,Authorization",
-	}))
-
-	// 9. Registrasi Routing Terpusat (Access Control Map)
-	route.Register(app, route.Dependencies{
+	app := config.NewApp(logger, route.Dependencies{
 		Pool:              pool,
 		Mongo:             mongoClient,
 		JWT:               jwtManager,
 		Permissions:       permissions,
-		UserService:       userService,
-		AuthService:       authService,
-		StudentService:    studentService,
-		CourseService:     courseService,
-		SupervisorService: supervisorService,
-		ReviewService:     reviewService,
-		PortfolioService:  portfolioService,
+		UserService:       service.NewUserService(userRepository, permissions),
+		AuthService:       service.NewAuthService(userRepository, tokenRepository, jwtManager, permissions, time.Duration(config.GetEnvInt("JWT_REFRESH_TTL_DAYS", 7))*24*time.Hour),
+		StudentService:    service.NewStudentService(studentRepository, permissions),
+		CourseService:     service.NewCourseService(courseRepository, outboxRepository, txManager),
+		SupervisorService: service.NewSupervisorService(supervisorRepository, studentRepository, txManager),
+		ReviewService:     service.NewReviewService(reviewRepository, courseRepository, permissions),
+		PortfolioService:  service.NewPortfolioService(portfolioRepository, studentRepository),
+		NotificationService: service.NewNotificationService(
+			notificationRepository, outboxRepository, inspector),
 	})
 
-	// 10. Penangan Route yang Tidak Dikenal (404 Not Found Terpusat)
-	app.Use(func(c *fiber.Ctx) error {
-		return helper.NotFound("endpoint tidak ditemukan")
+	// Sumber daya milik API ditutup setelah server HTTP berhenti.
+	app.Hooks().OnShutdown(func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = inspector.Close()
+		return mongoClient.Disconnect(ctx)
 	})
 
 	port := config.GetEnv("APP_PORT", "3000")
-	logger.Info("Server berjalan", slog.String("port", port))
-	log.Fatal(app.Listen(":" + port))
+	go func() {
+		if err := app.Listen(":" + port); err != nil {
+			logger.Error("server berhenti", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
+	}()
+	logger.Info("HTTP berjalan", slog.String("port", port))
+	return app
 }
