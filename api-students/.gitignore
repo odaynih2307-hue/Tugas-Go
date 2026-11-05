@@ -1,2 +1,8 @@
 .env
+.env.*
 logs/
+*.log
+coverage.out
+*.exe
+*.pdf
+*.png
